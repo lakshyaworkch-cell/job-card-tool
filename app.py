@@ -32,16 +32,31 @@ FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
 
 
 def parse_price(v):
-    """Return price in crores as float, or None if unusable."""
+    """Read a price cell. Returns (list of prices in Cr, display text) or None.
+
+    Handles: 3.25 Cr, 4.2cr, 3.7, "3,50" (decimal comma), "10. 0 Cr",
+    "4.45 Cr With half terrace" (note ignored), ranges like "4.50 Cr-5.0 Cr",
+    and lists like "6.5, 6.8". Ignores things like "1/4 basement" and
+    "sold", "hold", "GF-", "Full building" entries.
+    """
     if v is None or pd.isna(v):
         return None
     if isinstance(v, (int, float)):
-        return float(v)
+        return [float(v)], "%g" % v
     s = str(v).strip()
     if re.search(r"sold|hold|full|all building|gf|^g\b|^g-", s, re.I):
         return None
-    m = re.search(r"\d+(\.\d+)?", s.replace(",", "."))
-    return float(m.group()) if m else None
+    s = re.sub(r"\d+\s*/\s*\d+", " ", s)             # drop fractions like 1/4
+    s = re.sub(r"(\d)\.\s+(\d)", r"\1.\2", s)         # "10. 0" -> "10.0"
+    if re.fullmatch(r"\s*\d+,\d{1,2}\s*(cr)?\s*", s, re.I):
+        s = s.replace(",", ".")                          # "3,50" -> "3.50"
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", s)]
+    nums = [n for n in nums if 0.5 <= n <= 500]
+    if not nums:
+        return None
+    is_range = len(nums) > 1 and re.search(r"\d\s*(cr)?\s*(-|to)\s*\d", s, re.I)
+    sep = "-" if is_range else "/"
+    return nums, sep.join("%g" % n for n in nums)
 
 
 def first_number(v):
@@ -62,9 +77,15 @@ def load_data():
     df = pd.read_excel(DATA_FILE)
     df["_size"] = df["Plot Size (Sq Yard)"].map(first_number)
     df["_ts"] = df["Timestamp"].map(to_ts)
-    df["_floors"] = df.apply(
-        lambda r: [(lab, parse_price(r[col])) for col, lab in FLOORS
-                   if parse_price(r[col]) is not None], axis=1)
+    def floors_of(r):
+        out = []
+        for col, lab in FLOORS:
+            p = parse_price(r[col])
+            if p:
+                out.append((lab, p[0], p[1]))
+        return out
+
+    df["_floors"] = df.apply(floors_of, axis=1)
     return df
 
 
@@ -98,8 +119,8 @@ def make_row(r, floors, visit_date):
         "Location": r["Locality"],
         "Property": str(r["Rooms"]).replace(" ", ""),
         "Size": r["Plot Size (Sq Yard)"],
-        "Floor/s": ", ".join(f for f, _ in floors),
-        "Price": ", ".join("%g" % p for _, p in floors),
+        "Floor/s": ", ".join(f for f, _, _ in floors),
+        "Price": ", ".join(t for _, _, t in floors),
         "Facing": clean(r["Plot Facing"]),
         "Road": int(road) if not pd.isna(road) else "",
         "Source Name": r["Source Name"],
@@ -155,6 +176,26 @@ def build_card(rows, header):
 
 # ---------------------------------------------------------------- UI
 st.set_page_config(page_title="Tron Job Card Builder", layout="wide")
+st.markdown("""
+<style>
+:root { --teal:#00897B; --teal-dark:#00695C; --teal-light:#E0F2F1; }
+[data-testid="stHeader"] { background: var(--teal); }
+[data-testid="stHeader"] * { color:#fff !important; }
+.block-container h1 { background:var(--teal); color:#fff !important; padding:0.6rem 1rem;
+                      border-radius:8px; }
+.block-container h3 { color:var(--teal-dark); border-bottom:2px solid var(--teal); }
+[data-testid="stSidebar"] { background: var(--teal); }
+[data-testid="stSidebar"] h2, [data-testid="stSidebar"] label p,
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] span { color:#fff !important; }
+[data-testid="stSidebar"] input { color:#1f2d2b !important; background:#fff !important; }
+.stButton > button, .stDownloadButton > button {
+    background:var(--teal) !important; color:#fff !important; border:0; border-radius:6px; }
+.stButton > button p, .stDownloadButton > button p { color:#fff !important; }
+.stButton > button:hover, .stDownloadButton > button:hover { background:var(--teal-dark) !important; }
+span[data-baseweb="tag"] { background-color:var(--teal) !important; color:#fff !important; }
+span[data-baseweb="tag"] span { color:#fff !important; }
+</style>
+""", unsafe_allow_html=True)
 st.title("Tron Job Card Builder")
 
 df = load_data()
@@ -210,8 +251,8 @@ if text.strip():
 
 rows = []
 for _, r in d.iterrows():
-    fl = [(lab, p) for lab, p in r["_floors"]
-          if p >= min_price and (not max_price or p <= max_price)]
+    fl = [(lab, nums, txt) for lab, nums, txt in r["_floors"]
+          if any(n >= min_price and (not max_price or n <= max_price) for n in nums)]
     if not fl:
         continue
     rows.append(make_row(r, fl, visit_date))
