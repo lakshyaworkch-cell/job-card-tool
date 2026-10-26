@@ -72,17 +72,51 @@ def to_ts(v):
     return pd.to_datetime(str(v), dayfirst=True, errors="coerce")
 
 
+def is_red(cell):
+    """True if the cell has a red fill or red text (our 'sold' marker)."""
+    def red_rgb(c):
+        try:
+            if c is None or c.type != "rgb" or not isinstance(c.rgb, str):
+                return False
+            h = c.rgb[-6:]
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return r >= 0xC0 and g <= 0x60 and b <= 0x60
+        except Exception:
+            return False
+    if cell.fill is not None and cell.fill.fill_type == "solid" and red_rgb(cell.fill.fgColor):
+        return True
+    return cell.font is not None and red_rgb(cell.font.color)
+
+
+SOLD_ROW_MIN_RED_CELLS = 15   # a row with this many red cells counts as "entire row red"
+
+
 @st.cache_data
 def load_data():
     df = pd.read_excel(DATA_FILE)
     df["_size"] = df["Plot Size (Sq Yard)"].map(first_number)
     df["_ts"] = df["Timestamp"].map(to_ts)
+
+    # Read the red colouring straight from the Excel file (pandas can't see colours)
+    ws = load_workbook(DATA_FILE).active
+    header = [c.value for c in ws[1]]
+    col_idx = {name: i + 1 for i, name in enumerate(header)}
+    sold_row, red_floor = {}, {}
+    for r in range(2, ws.max_row + 1):
+        n_red = sum(1 for c in range(1, len(header) + 1) if is_red(ws.cell(r, c)))
+        sold_row[r] = n_red >= SOLD_ROW_MIN_RED_CELLS
+        red_floor[r] = {lab for col, lab in FLOORS
+                        if col in col_idx and is_red(ws.cell(r, col_idx[col]))}
+
+    df["_sold"] = [sold_row.get(i + 2, False) for i in df.index]
+
     def floors_of(r):
         out = []
+        reds = red_floor.get(r.name + 2, set())
         for col, lab in FLOORS:
             p = parse_price(r[col])
             if p:
-                out.append((lab, p[0], p[1]))
+                out.append((lab, p[0], p[1], lab in reds))
         return out
 
     df["_floors"] = df.apply(floors_of, axis=1)
@@ -227,10 +261,17 @@ with c3:
     min_price = p1.number_input("Min price (Cr)", min_value=0.0, value=0.0, step=0.25)
     max_price = p2.number_input("Max price (Cr, 0 = any)", min_value=0.0, value=0.0, step=0.25)
     latest_only = st.checkbox("Latest entry per plot only", value=True)
+    hide_sold_rows = st.checkbox("Hide sold properties (entire row red)", value=True)
+    hide_sold_floors = st.checkbox("Hide sold floors (red price cell)", value=True)
 
 d = df.copy()
 if latest_only:
     d = d.sort_values("_ts", ascending=False).drop_duplicates(["Plot No.", "Locality"])
+n_sold_hidden = 0
+if hide_sold_rows:
+    n_before = len(d)
+    d = d[~d["_sold"]]
+    n_sold_hidden = n_before - len(d)
 if localities:
     d = d[d["Locality"].isin(localities)]
 if rooms:
@@ -251,8 +292,9 @@ if text.strip():
 
 rows = []
 for _, r in d.iterrows():
-    fl = [(lab, nums, txt) for lab, nums, txt in r["_floors"]
-          if any(n >= min_price and (not max_price or n <= max_price) for n in nums)]
+    fl = [(lab, nums, txt) for lab, nums, txt, red in r["_floors"]
+          if not (hide_sold_floors and red and not r["_sold"])
+          and any(n >= min_price and (not max_price or n <= max_price) for n in nums)]
     if not fl:
         continue
     rows.append(make_row(r, fl, visit_date))
@@ -260,6 +302,8 @@ for _, r in d.iterrows():
 rows.sort(key=lambda x: (x["Location"], first_number(x["Size"]), str(x["Address"])))
 
 st.write(f"**{len(rows)} matching properties**")
+if hide_sold_rows and n_sold_hidden:
+    st.caption(f"{n_sold_hidden} sold (red) properties are hidden from the whole list.")
 if rows:
     view = pd.DataFrame(rows)
     view.insert(0, "Select", True)
