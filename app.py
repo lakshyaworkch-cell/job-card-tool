@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill
 
 BASE = Path(__file__).parent
 DATA_FILE = BASE / "Data.xlsx"
@@ -109,6 +110,9 @@ def make_row(r, floors, visit_date):
     }
 
 
+TEAL = PatternFill("solid", fgColor="00897B")
+
+
 def build_card(rows, header):
     wb = load_workbook(TEMPLATE)
     ws = wb["Naveen"]
@@ -118,6 +122,19 @@ def build_card(rows, header):
     ws["M4"] = f"RM: {header['rm']}"
     ws["A5"] = f"Contact Number: {header['contact']}"
     ws["E5"] = f"Preferred Micro-Market:  {header['markets']}"
+
+    # Teal fill with white bold text: client info band and column headings
+    for r in (4, 5, 7):
+        for col in EXCEL_COLS:
+            cell = ws[f"{col}{r}"]
+            cell.fill = TEAL
+            cell.font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+
+    # The template has rows 8-44 hidden, so unhide every row first
+    for r in range(8, max(ws.max_row, 8 + len(rows)) + 1):
+        ws.row_dimensions[r].hidden = False
+        ws.row_dimensions[r].height = None
+
     last_styled = 57
     for i, row in enumerate(rows):
         r = 8 + i
