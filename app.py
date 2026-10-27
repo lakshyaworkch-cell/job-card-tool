@@ -217,7 +217,7 @@ st.markdown("""
 [data-testid="stHeader"] * { color:#fff !important; }
 .block-container h1 { background:var(--teal); color:#fff !important; padding:0.6rem 1rem;
                       border-radius:8px; }
-.block-container h3 { color:var(--teal-dark); border-bottom:2px solid var(--teal); }
+.block-container h3 { color:#4DB6AC; border-bottom:2px solid var(--teal); }
 [data-testid="stSidebar"] { background: var(--teal); }
 [data-testid="stSidebar"] h2, [data-testid="stSidebar"] label p,
 [data-testid="stSidebar"] label, [data-testid="stSidebar"] span { color:#fff !important; }
@@ -243,26 +243,46 @@ with st.sidebar:
     contact = st.text_input("Contact number")
     visit_date = st.text_input("Visit date (optional)", placeholder="27/10/2026")
 
-st.subheader("Search")
+INITIAL = {"loc": [], "text": "", "facing": [], "rooms": ["4 BHK"],
+           "stage": ["RTM", "U/C"], "sources": [], "min_size": 0, "max_size": 0,
+           "min_price": 0.0, "max_price": 0.0, "latest_only": True,
+           "hide_rows": True, "hide_floors": True}
+CLEARED = {**INITIAL, "rooms": [], "stage": []}
+for k, v in INITIAL.items():
+    st.session_state.setdefault(k, v)
+
+
+def clear_filters():
+    for k, v in CLEARED.items():
+        st.session_state[k] = v
+
+
+h1, h2 = st.columns([6, 1])
+h1.subheader("Search")
+h2.button("Clear all", on_click=clear_filters, width="stretch")
+
 c1, c2, c3 = st.columns(3)
 with c1:
-    localities = st.multiselect("Location / area", sorted(df["Locality"].unique()))
-    text = st.text_input("Name / plot no. / source name contains")
+    localities = st.multiselect("Location / area", sorted(df["Locality"].unique()), key="loc")
+    text = st.text_input("Name / plot no. / source name contains", key="text")
+    facing = st.multiselect("Facing", sorted(df["Plot Facing"].dropna().unique()), key="facing")
 with c2:
-    rooms = st.multiselect("Property", sorted(df["Rooms"].dropna().unique()),
-                           default=["4 BHK"])
-    stage = st.multiselect("Stage", ["RTM", "U/C"], default=["RTM", "U/C"])
-    sources = st.multiselect("Source type", sorted(df["Source of Building"].unique()))
+    rooms = st.multiselect("Property", sorted(df["Rooms"].dropna().unique()), key="rooms")
+    stage = st.multiselect("Stage", ["RTM", "U/C"], key="stage")
+    sources = st.multiselect("Source type", sorted(df["Source of Building"].unique()),
+                             key="sources")
 with c3:
     s1, s2 = st.columns(2)
-    min_size = s1.number_input("Min size (sq yd)", min_value=0, value=0, step=10)
-    max_size = s2.number_input("Max size (sq yd, 0 = any)", min_value=0, value=0, step=10)
+    min_size = s1.number_input("Min size (sq yd)", min_value=0, step=10, key="min_size")
+    max_size = s2.number_input("Max size (sq yd, 0 = any)", min_value=0, step=10,
+                               key="max_size")
     p1, p2 = st.columns(2)
-    min_price = p1.number_input("Min price (Cr)", min_value=0.0, value=0.0, step=0.25)
-    max_price = p2.number_input("Max price (Cr, 0 = any)", min_value=0.0, value=0.0, step=0.25)
-    latest_only = st.checkbox("Latest entry per plot only", value=True)
-    hide_sold_rows = st.checkbox("Hide sold properties (entire row red)", value=True)
-    hide_sold_floors = st.checkbox("Hide sold floors (red price cell)", value=True)
+    min_price = p1.number_input("Min price (Cr)", min_value=0.0, step=0.25, key="min_price")
+    max_price = p2.number_input("Max price (Cr, 0 = any)", min_value=0.0, step=0.25,
+                                key="max_price")
+    latest_only = st.checkbox("Latest entry per plot only", key="latest_only")
+    hide_sold_rows = st.checkbox("Hide sold properties (entire row red)", key="hide_rows")
+    hide_sold_floors = st.checkbox("Hide sold floors (red price cell)", key="hide_floors")
 
 d = df.copy()
 if latest_only:
@@ -274,6 +294,8 @@ if hide_sold_rows:
     n_sold_hidden = n_before - len(d)
 if localities:
     d = d[d["Locality"].isin(localities)]
+if facing:
+    d = d[d["Plot Facing"].isin(facing)]
 if rooms:
     d = d[d["Rooms"].isin(rooms)]
 if stage:
