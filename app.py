@@ -348,7 +348,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- filters
-INITIAL = {"loc": [], "text": "", "facing": [], "rooms": ["4 BHK"],
+INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
            "stage": ["RTM", "U/C"], "sources": [], "min_size": 0, "max_size": 0,
            "min_price": 0.0, "max_price": 0.0, "latest_only": True,
            "hide_rows": True, "hide_floors": True}
@@ -362,6 +362,20 @@ def clear_filters():
         st.session_state[k] = v
 
 
+def norm(x):
+    return re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+@st.cache_data
+def address_options(frame):
+    """Labels like 'A-1084 · Sushant Lok 1' -> (normalised plot no., locality)."""
+    pairs = frame[["Plot No.", "Locality"]].dropna().astype(str).drop_duplicates()
+    lookup = {f"{p.strip()} · {l}": (norm(p), l) for p, l in zip(pairs["Plot No."], pairs["Locality"])}
+    return sorted(lookup), lookup
+
+
+addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
+
 kpi_slot = st.container()
 
 with st.container(border=True):
@@ -373,8 +387,9 @@ with st.container(border=True):
     c1, c2, c3 = st.columns(3)
     with c1:
         localities = st.multiselect("Location / area", sorted(df["Locality"].unique()), key="loc")
-        text = st.text_input("Name / plot no. / source", key="text",
-                             placeholder="e.g. H-40 or builder name")
+        addr = st.multiselect("Address / plot no. / name", addr_labels, key="addr",
+                              accept_new_options=True,
+                              placeholder="Pick or type, press Enter to add more")
         facing = st.multiselect("Facing", sorted(df["Plot Facing"].dropna().unique()), key="facing")
     with c2:
         rooms = st.multiselect("Property type", sorted(df["Rooms"].dropna().unique()), key="rooms")
@@ -420,11 +435,20 @@ if min_size:
     d = d[d["_size"] >= min_size]
 if max_size:
     d = d[d["_size"] <= max_size]
-if text.strip():
-    t = text.strip().lower()
-    hay = (d["Plot No."].astype(str) + " " + d["Locality"].astype(str) + " "
-           + d["Source Name"].astype(str) + " " + d["Blocks"].astype(str))
-    d = d[hay.str.lower().str.contains(re.escape(t))]
+if addr:
+    picked = {addr_lookup[a] for a in addr if a in addr_lookup}      # exact plot + area
+    typed = [a.strip().lower() for a in addr if a not in addr_lookup and a.strip()]
+    keep = pd.Series(False, index=d.index)
+    if picked:
+        keep |= pd.Series([(norm(p), l) in picked for p, l in
+                           zip(d["Plot No."].astype(str), d["Locality"].astype(str))],
+                          index=d.index)
+    if typed:                                                         # free text: search
+        hay = (d["Plot No."].astype(str) + " " + d["Locality"].astype(str) + " "
+               + d["Source Name"].astype(str) + " " + d["Blocks"].astype(str)).str.lower()
+        for t in typed:
+            keep |= hay.str.contains(re.escape(t))
+    d = d[keep]
 
 rows, all_prices = [], []
 for _, r in d.iterrows():
