@@ -20,9 +20,9 @@ from openpyxl.worksheet.page import PageMargins
 BASE = Path(__file__).parent
 TEMPLATE = BASE / "Naveen_Job_Card_Empty.xlsx"
 
-SHEET_ID = "1vIatz_XBnVxD5uuiyKF5g7twMV6DphyiAZN0Sjhw4OY"
+SHEET_ID = "1PmNgcqTg8XxcvjbX5UNaIZICaFfUUkspCTzQgz5Ctp4"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=xlsx"
-SHEET_TAB = 0   # tab position (0 = first tab) or the exact tab name, e.g. "Sheet1"
+SHEET_TAB = 0   # gid=0 in your link is the first tab, so 0 is correct
 
 LOGO_SCALE = 0.7        # Excel logo size: 0.7 = 70% of the template size (lower = smaller)
 LOGO_FALLBACK_H = 55    # logo height in px, used only if the template logo is anchored differently
