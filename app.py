@@ -394,6 +394,46 @@ except Exception as e:
     st.error(f"Could not load data from Google Sheets: {e}")
     st.stop()
 
+# ---------------------------------------------------------------- DEFAULTS
+# These four checkboxes are ON by default (and stay ON after "Clear all"):
+#   Lift & Stilt Parking, Latest entry per plot, Hide sold properties, Hide sold floors
+DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
+              "latest_only": True,    # Latest entry per plot only
+              "hide_rows": True,      # Hide sold properties (entire row red)
+              "hide_floors": True}    # Hide sold floors (red price cell)
+
+INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
+           "stage": ["RTM", "U/C"], "sources": [], "road": [], "floor_pref": [],
+           "min_size": 0, "max_size": 0,
+           "min_price": 0.0, "max_price": 0.0,
+           **DEFAULT_ON,
+           **{f"feat_{f}": False for f in OTHERS}}
+CLEARED = {**INITIAL, "rooms": [], "stage": []}      # the four DEFAULT_ON stay ON
+
+# Set every default once, at the start of a new session, before any widget is drawn
+if not st.session_state.get("_defaults_applied"):
+    for k, v in INITIAL.items():
+        st.session_state[k] = v
+    st.session_state["_defaults_applied"] = True
+
+
+def clear_filters():
+    for k, v in CLEARED.items():
+        st.session_state[k] = v
+
+
+def norm(x):
+    return re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+@st.cache_data
+def address_options(frame):
+    """Labels like 'A-1084 · Sushant Lok 1' -> (normalised plot no., locality)."""
+    pairs = frame[["Plot No.", "Locality"]].dropna().astype(str).drop_duplicates()
+    lookup = {f"{p.strip()} · {l}": (norm(p), l) for p, l in zip(pairs["Plot No."], pairs["Locality"])}
+    return sorted(lookup), lookup
+
+
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Client details")
@@ -428,34 +468,6 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- filters
-INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
-           "stage": ["RTM", "U/C"], "sources": [], "road": [], "floor_pref": [],
-           "lift_stilt": True, "min_size": 0, "max_size": 0,
-           "min_price": 0.0, "max_price": 0.0, "latest_only": True,
-           "hide_rows": True, "hide_floors": True,
-           **{f"feat_{f}": False for f in OTHERS}}
-CLEARED = {**INITIAL, "rooms": [], "stage": []}      # Lift & Stilt stays ON after Clear all
-for k, v in INITIAL.items():
-    st.session_state.setdefault(k, v)
-
-
-def clear_filters():
-    for k, v in CLEARED.items():
-        st.session_state[k] = v
-
-
-def norm(x):
-    return re.sub(r"[^a-z0-9]", "", str(x).lower())
-
-
-@st.cache_data
-def address_options(frame):
-    """Labels like 'A-1084 · Sushant Lok 1' -> (normalised plot no., locality)."""
-    pairs = frame[["Plot No.", "Locality"]].dropna().astype(str).drop_duplicates()
-    lookup = {f"{p.strip()} · {l}": (norm(p), l) for p, l in zip(pairs["Plot No."], pairs["Locality"])}
-    return sorted(lookup), lookup
-
-
 addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
 
 FLOOR_NAMES = {"FF": "First Floor (FF)", "FF+Bsmt": "First Floor + Basement", "Triplex": "Triplex",
