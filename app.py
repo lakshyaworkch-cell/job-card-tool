@@ -1,19 +1,31 @@
 import base64
 import copy
-import html
 import io
 import re
 import zipfile
 from pathlib import Path
 
 import pandas as pd
+import requests
 import streamlit as st
 from openpyxl import load_workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
+from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, TwoCellAnchor
+from openpyxl.drawing.xdr import XDRPositiveSize2D
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.units import pixels_to_EMU
+from openpyxl.worksheet.page import PageMargins
 
 BASE = Path(__file__).parent
-DATA_FILE = BASE / "Data.xlsx"
 TEMPLATE = BASE / "Naveen_Job_Card_Empty.xlsx"
+
+SHEET_ID = "1vIatz_XBnVxD5uuiyKF5g7twMV6DphyiAZN0Sjhw4OY"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=xlsx"
+SHEET_TAB = 0   # tab position (0 = first tab) or the exact tab name, e.g. "Sheet1"
+
+LOGO_SCALE = 0.7        # Excel logo size: 0.7 = 70% of the template size (lower = smaller)
+LOGO_FALLBACK_H = 55    # logo height in px, used only if the template logo is anchored differently
 
 FLOORS = [
     ("First Floor Pricing", "FF"),
@@ -33,6 +45,7 @@ RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
          ("Others [Gated]", "Gated")]
+OTHERS = ["Corner", "Resale", "Gated", "T-Point", "Park Facing"]
 
 
 def parse_price(v):
@@ -95,14 +108,26 @@ def is_red(cell):
 SOLD_ROW_MIN_RED_CELLS = 15   # a row with this many red cells counts as "entire row red"
 
 
-@st.cache_data
+@st.cache_data(ttl=300, show_spinner="Loading latest data from Google Sheets...")
+def fetch_sheet_bytes():
+    r = requests.get(SHEET_URL, timeout=60)
+    r.raise_for_status()
+    if "text/html" in r.headers.get("Content-Type", ""):
+        raise RuntimeError("Google returned a login page. Set the sheet to "
+                           "'Anyone with the link can view'.")
+    return r.content
+
+
+@st.cache_data(ttl=300)
 def load_data():
-    df = pd.read_excel(DATA_FILE)
+    raw = fetch_sheet_bytes()
+    df = pd.read_excel(io.BytesIO(raw), sheet_name=SHEET_TAB)
     df["_size"] = df["Plot Size (Sq Yard)"].map(first_number)
     df["_ts"] = df["Timestamp"].map(to_ts)
 
-    # Read the red colouring straight from the Excel file (pandas can't see colours)
-    ws = load_workbook(DATA_FILE).active
+    # Read the red colouring straight from the Excel export (pandas can't see colours)
+    wb = load_workbook(io.BytesIO(raw))
+    ws = wb.worksheets[SHEET_TAB] if isinstance(SHEET_TAB, int) else wb[SHEET_TAB]
     header = [c.value for c in ws[1]]
     col_idx = {name: i + 1 for i, name in enumerate(header)}
     sold_row, red_floor = {}, {}
@@ -169,25 +194,47 @@ def make_row(r, floors, visit_date):
     }
 
 
-TEAL = PatternFill("solid", fgColor="00897B")
+NO_FILL = PatternFill(fill_type=None)
+
+
+def label_value(label, value):
+    """Rich text: label in normal weight, the value we filled in bold."""
+    base = dict(rFont="Calibri", sz=12)
+    parts = [TextBlock(InlineFont(b=False, **base), label)]
+    if value:
+        parts.append(TextBlock(InlineFont(b=True, **base), str(value)))
+    return CellRichText(*parts)
+
+
+def shrink_logos(ws):
+    """Make the logo(s) in the sheet smaller."""
+    for img in ws._images:
+        a = img.anchor
+        if isinstance(a, OneCellAnchor):
+            a.ext.width = int(a.ext.width * LOGO_SCALE)
+            a.ext.height = int(a.ext.height * LOGO_SCALE)
+        elif isinstance(a, TwoCellAnchor):
+            h = LOGO_FALLBACK_H
+            w = h * img.width / max(img.height, 1)
+            img.anchor = OneCellAnchor(
+                _from=a._from,
+                ext=XDRPositiveSize2D(pixels_to_EMU(int(w)), pixels_to_EMU(int(h))))
+        else:                                      # plain cell-name anchor
+            img.width = int(img.width * LOGO_SCALE)
+            img.height = int(img.height * LOGO_SCALE)
 
 
 def build_card(rows, header):
     wb = load_workbook(TEMPLATE)
     ws = wb["Naveen"]
-    ws["A4"] = f"Client Name:   {header['name']}"
-    ws["E4"] = f"Budget Range: {header['budget']}"
-    ws["I4"] = f"Client Type:  {header['ctype']}"
-    ws["M4"] = f"RM: {header['rm']}"
-    ws["A5"] = f"Contact Number: {header['contact']}"
-    ws["E5"] = f"Preferred Micro-Market:  {header['markets']}"
 
-    # Teal fill with white bold text: client info band and column headings
-    for r in (4, 5, 7):
-        for col in EXCEL_COLS:
-            cell = ws[f"{col}{r}"]
-            cell.fill = TEAL
-            cell.font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+    # Top info: labels normal, our entries bold
+    ws["A4"] = label_value("Client Name:   ", header["name"])
+    ws["E4"] = label_value("Budget Range: ", header["budget"])
+    ws["I4"] = label_value("Client Type:  ", header["ctype"])
+    ws["M4"] = label_value("RM: ", header["rm"])
+    ws["A5"] = label_value("Contact Number: ", header["contact"])
+    ws["E5"] = label_value("Preferred Micro-Market:  ", header["markets"])
 
     # The template has rows 8-44 hidden, so unhide every row first
     for r in range(8, max(ws.max_row, 8 + len(rows)) + 1):
@@ -207,6 +254,24 @@ def build_card(rows, header):
         for col, key in zip(EXCEL_COLS, CARD_COLS):
             v = row.get(key, "")
             ws[f"{col}{r}"] = v if v != "" else None
+
+    # Classic look: no colour fills anywhere, black text
+    last_row = max(57, 8 + len(rows))
+    for r in range(4, last_row + 1):
+        for col in EXCEL_COLS:
+            ws[f"{col}{r}"].fill = NO_FILL
+    for r in (4, 5):                               # normal weight base for info band
+        for col in EXCEL_COLS:
+            ws[f"{col}{r}"].font = Font(name="Calibri", size=12, bold=False, color="000000")
+    for col in EXCEL_COLS:                         # column headings
+        ws[f"{col}7"].font = Font(name="Calibri", size=12, bold=True, color="000000")
+
+    # Margins: 0.25" on all sides
+    ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.25, bottom=0.25,
+                                  header=0.1, footer=0.1)
+
+    shrink_logos(ws)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -323,7 +388,11 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 </style>
 """, unsafe_allow_html=True)
 
-df = load_data()
+try:
+    df = load_data()
+except Exception as e:
+    st.error(f"Could not load data from Google Sheets: {e}")
+    st.stop()
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
@@ -336,6 +405,10 @@ with st.sidebar:
     visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY")
     st.markdown('<div class="side-note">These details are printed in the header of the '
                 'downloaded job card.</div>', unsafe_allow_html=True)
+    st.write("")
+    if st.button("🔄 Refresh data from Google Sheet", width="stretch"):
+        st.cache_data.clear()
+        st.rerun()
 
 # ---------------------------------------------------------------- hero
 logo_tag = ""
@@ -356,10 +429,12 @@ st.markdown(f"""
 
 # ---------------------------------------------------------------- filters
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
-           "stage": ["RTM", "U/C"], "sources": [], "road": [], "others": [], "floor_pref": [], "lift_stilt": True, "min_size": 0, "max_size": 0,
+           "stage": ["RTM", "U/C"], "sources": [], "road": [], "floor_pref": [],
+           "lift_stilt": True, "min_size": 0, "max_size": 0,
            "min_price": 0.0, "max_price": 0.0, "latest_only": True,
-           "hide_rows": True, "hide_floors": True}
-CLEARED = {**INITIAL, "rooms": [], "stage": []}
+           "hide_rows": True, "hide_floors": True,
+           **{f"feat_{f}": False for f in OTHERS}}
+CLEARED = {**INITIAL, "rooms": [], "stage": []}      # Lift & Stilt stays ON after Clear all
 for k, v in INITIAL.items():
     st.session_state.setdefault(k, v)
 
@@ -383,7 +458,6 @@ def address_options(frame):
 
 addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
 
-OTHERS = ["Corner", "Resale", "Gated", "T-Point", "Park Facing"]
 FLOOR_NAMES = {"FF": "First Floor (FF)", "FF+Bsmt": "First Floor + Basement", "Triplex": "Triplex",
                "SF": "Second Floor (SF)", "TF": "Third Floor (TF)", "Top": "Fourth / Top Floor",
                "Top (Terrace)": "Top Floor with Terrace", "Duplex": "Duplex"}
@@ -422,16 +496,20 @@ with st.container(border=True):
         road = st.multiselect("Road size", road_options, key="road",
                               format_func=lambda x: f"{x:g}")
 
-    f1, f2, f3 = st.columns(3)
-    floor_pref = f1.multiselect("Floor preference", list(FLOOR_NAMES), key="floor_pref",
-                                format_func=lambda x: FLOOR_NAMES[x],
-                                placeholder="Any floor",
-                                help="Shows only the selected floors, and only properties that have one of them available.")
-    others = f2.multiselect("Others (property features)", OTHERS, key="others",
-                            placeholder="Pick features",
-                            help="Shows only properties that have ALL the selected features.")
-    f3.markdown('<div class="mini-label">Required features</div>', unsafe_allow_html=True)
-    lift_stilt = f3.checkbox("Lift & Stilt Parking required", key="lift_stilt")
+    fp_col, _ = st.columns([1, 2])
+    floor_pref = fp_col.multiselect("Floor preference", list(FLOOR_NAMES), key="floor_pref",
+                                    format_func=lambda x: FLOOR_NAMES[x],
+                                    placeholder="Any floor",
+                                    help="Shows only the selected floors, and only properties that have one of them available.")
+
+    st.markdown('<div class="mini-label">Property features (tick to require)</div>',
+                unsafe_allow_html=True)
+    fcols = st.columns([1.6, 1, 1, 1, 1, 1.2])
+    lift_stilt = fcols[0].checkbox("Lift & Stilt Parking", key="lift_stilt")
+    selected_feats = []
+    for col, feat in zip(fcols[1:], OTHERS):
+        if col.checkbox(feat, key=f"feat_{feat}"):
+            selected_feats.append(feat)
 
     o1, o2, o3 = st.columns(3)
     latest_only = o1.checkbox("Latest entry per plot only", key="latest_only")
@@ -462,7 +540,7 @@ if road:
 if lift_stilt:
     for col in ("Others [Lift]", "Others [Stilt Parking]"):
         d = d[d[col].astype(str).str.strip().str.lower() == "yes"]
-for feat in others:
+for feat in selected_feats:
     d = d[d[f"Others [{feat}]"].astype(str).str.strip().str.lower() == "yes"]
 if min_size:
     d = d[d["_size"] >= min_size]
