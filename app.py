@@ -29,6 +29,7 @@ CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Pric
              "Facing", "Road", "Source Name", "Phone No.", "Type", "Tron Remarks",
              "Client Reaction"]
 EXCEL_COLS = "ABCDEFGHIJKLMN"
+RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
          ("Others [Gated]", "Gated")]
@@ -270,6 +271,7 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 /* ---------- section titles ---------- */
 .sec-title { font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:-.01em; margin:0; }
 .sec-sub { font-size:.82rem; color:var(--muted); margin:2px 0 0 0; }
+.mini-label { font-size:.78rem; font-weight:600; color:var(--muted); letter-spacing:.03em; text-transform:uppercase; margin:0 0 .45rem 0; }
 
 /* ---------- bordered containers (filters / results) ---------- */
 [data-testid="stVerticalBlockBorderWrapper"] { background:linear-gradient(180deg, var(--card), #0E2523);
@@ -281,8 +283,10 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 [data-baseweb="select"] > div, [data-baseweb="input"], [data-baseweb="base-input"], .stNumberInput input, .stTextInput input {
         background:#0B1F1E !important; border-color:var(--line) !important; border-radius:10px !important; color:var(--text) !important; }
 [data-baseweb="select"] > div:hover, [data-baseweb="input"]:hover { border-color:var(--teal-600) !important; }
-span[data-baseweb="tag"] { background:var(--teal-600) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
-span[data-baseweb="tag"] span { color:#fff !important; }
+[data-baseweb="tag"] { background:var(--teal-600) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
+[data-baseweb="tag"] span { color:#fff !important; }
+[data-testid="stMultiSelectTagsContainer"] > span > span { background:var(--teal-600) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
+[data-testid="stMultiSelectTagsContainer"] > span > span * { color:#fff !important; }
 [data-testid="stCheckbox"] label p { text-transform:none !important; letter-spacing:0; font-size:.88rem !important; color:var(--text) !important; font-weight:500 !important; }
 
 /* ---------- buttons ---------- */
@@ -301,6 +305,8 @@ span[data-baseweb="tag"] span { color:#fff !important; }
 [data-testid="stSidebar"] label p { color:#9ED9D1 !important; }
 [data-testid="stSidebar"] [data-baseweb="input"], [data-testid="stSidebar"] [data-baseweb="base-input"],
 [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] svg { color:#0B1F1E !important; fill:#0B1F1E !important; }
 [data-testid="stSidebar"] input { color:#0B1F1E !important; -webkit-text-fill-color:#0B1F1E !important; caret-color:#0B1F1E; background:transparent !important; font-weight:500; }
 [data-testid="stSidebar"] input::placeholder { color:#6B8F8A !important; -webkit-text-fill-color:#6B8F8A !important; }
 .side-note { font-size:.78rem; color:#7FC4BB; line-height:1.5; margin-top:6px; }
@@ -325,7 +331,7 @@ with st.sidebar:
     name = st.text_input("Client name")
     budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr")
     ctype = st.text_input("Client type")
-    rm = st.text_input("Relationship manager")
+    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM")
     contact = st.text_input("Contact number")
     visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY")
     st.markdown('<div class="side-note">These details are printed in the header of the '
@@ -350,7 +356,7 @@ st.markdown(f"""
 
 # ---------------------------------------------------------------- filters
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
-           "stage": ["RTM", "U/C"], "sources": [], "road": [], "others": [], "min_size": 0, "max_size": 0,
+           "stage": ["RTM", "U/C"], "sources": [], "road": [], "others": [], "floor_pref": [], "lift_stilt": True, "min_size": 0, "max_size": 0,
            "min_price": 0.0, "max_price": 0.0, "latest_only": True,
            "hide_rows": True, "hide_floors": True}
 CLEARED = {**INITIAL, "rooms": [], "stage": []}
@@ -377,7 +383,10 @@ def address_options(frame):
 
 addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
 
-OTHERS = ["Lift", "Stilt Parking", "Corner", "Resale", "Gated", "T-Point", "Park Facing"]
+OTHERS = ["Corner", "Resale", "Gated", "T-Point", "Park Facing"]
+FLOOR_NAMES = {"FF": "First Floor (FF)", "FF+Bsmt": "First Floor + Basement", "Triplex": "Triplex",
+               "SF": "Second Floor (SF)", "TF": "Third Floor (TF)", "Top": "Fourth / Top Floor",
+               "Top (Terrace)": "Top Floor with Terrace", "Duplex": "Duplex"}
 road_options = sorted({int(x) for x in df["Road Size"].dropna()})
 
 kpi_slot = st.container()
@@ -413,9 +422,16 @@ with st.container(border=True):
         road = st.multiselect("Road size", road_options, key="road",
                               format_func=lambda x: f"{x:g}")
 
-    others = st.multiselect("Others (property features)", OTHERS, key="others",
-                            placeholder="Pick features, e.g. Corner, Park Facing, Lift",
+    f1, f2, f3 = st.columns(3)
+    floor_pref = f1.multiselect("Floor preference", list(FLOOR_NAMES), key="floor_pref",
+                                format_func=lambda x: FLOOR_NAMES[x],
+                                placeholder="Any floor",
+                                help="Shows only the selected floors, and only properties that have one of them available.")
+    others = f2.multiselect("Others (property features)", OTHERS, key="others",
+                            placeholder="Pick features",
                             help="Shows only properties that have ALL the selected features.")
+    f3.markdown('<div class="mini-label">Required features</div>', unsafe_allow_html=True)
+    lift_stilt = f3.checkbox("Lift & Stilt Parking required", key="lift_stilt")
 
     o1, o2, o3 = st.columns(3)
     latest_only = o1.checkbox("Latest entry per plot only", key="latest_only")
@@ -443,6 +459,9 @@ if sources:
     d = d[d["Source of Building"].isin(sources)]
 if road:
     d = d[d["Road Size"].isin(road)]
+if lift_stilt:
+    for col in ("Others [Lift]", "Others [Stilt Parking]"):
+        d = d[d[col].astype(str).str.strip().str.lower() == "yes"]
 for feat in others:
     d = d[d[f"Others [{feat}]"].astype(str).str.strip().str.lower() == "yes"]
 if min_size:
@@ -468,6 +487,7 @@ rows, all_prices = [], []
 for _, r in d.iterrows():
     fl = [(lab, nums, txt) for lab, nums, txt, red in r["_floors"]
           if not (hide_sold_floors and red and not r["_sold"])
+          and (not floor_pref or lab in floor_pref)
           and any(n >= min_price and (not max_price or n <= max_price) for n in nums)]
     if not fl:
         continue
@@ -515,7 +535,7 @@ with st.container(border=True):
         if chosen:
             a2.download_button(
                 "Download job card (Excel)",
-                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype, rm=rm,
+                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype, rm=", ".join(rm),
                                              contact=contact,
                                              markets=", ".join(localities))),
                 file_name=f"Job_Card_{(name or 'Client').strip().replace(' ', '_')}.xlsx",
