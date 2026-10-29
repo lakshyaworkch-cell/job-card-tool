@@ -136,7 +136,7 @@ def make_row(r, floors, visit_date):
     if isinstance(c, str) and c.strip():
         rem.append(c.strip())
     for col, lab in FLAGS:
-        if r[col] == "Yes":
+        if str(r[col]).strip().lower() == "yes":
             rem.append(lab)
     seen, out = set(), []
     for x in rem:
@@ -299,9 +299,10 @@ span[data-baseweb="tag"] span { color:#fff !important; }
 [data-testid="stSidebar"] { background:linear-gradient(190deg, #0B3F3A 0%, #082E2B 100%); border-right:1px solid var(--line); }
 [data-testid="stSidebar"] h2 { color:#fff !important; font-size:1.05rem; font-weight:700; letter-spacing:.02em; }
 [data-testid="stSidebar"] label p { color:#9ED9D1 !important; }
-[data-testid="stSidebar"] [data-baseweb="input"], [data-testid="stSidebar"] [data-baseweb="base-input"] { background:rgba(255,255,255,.07) !important; border-color:rgba(255,255,255,.18) !important; }
-[data-testid="stSidebar"] input { color:#fff !important; background:transparent !important; }
-[data-testid="stSidebar"] input::placeholder { color:rgba(255,255,255,.4) !important; }
+[data-testid="stSidebar"] [data-baseweb="input"], [data-testid="stSidebar"] [data-baseweb="base-input"],
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"] { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
+[data-testid="stSidebar"] input { color:#0B1F1E !important; -webkit-text-fill-color:#0B1F1E !important; caret-color:#0B1F1E; background:transparent !important; font-weight:500; }
+[data-testid="stSidebar"] input::placeholder { color:#6B8F8A !important; -webkit-text-fill-color:#6B8F8A !important; }
 .side-note { font-size:.78rem; color:#7FC4BB; line-height:1.5; margin-top:6px; }
 
 /* ---------- table ---------- */
@@ -349,7 +350,7 @@ st.markdown(f"""
 
 # ---------------------------------------------------------------- filters
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
-           "stage": ["RTM", "U/C"], "sources": [], "min_size": 0, "max_size": 0,
+           "stage": ["RTM", "U/C"], "sources": [], "road": [], "others": [], "min_size": 0, "max_size": 0,
            "min_price": 0.0, "max_price": 0.0, "latest_only": True,
            "hide_rows": True, "hide_floors": True}
 CLEARED = {**INITIAL, "rooms": [], "stage": []}
@@ -375,6 +376,9 @@ def address_options(frame):
 
 
 addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
+
+OTHERS = ["Lift", "Stilt Parking", "Corner", "Resale", "Gated", "T-Point", "Park Facing"]
+road_options = sorted({int(x) for x in df["Road Size"].dropna()})
 
 kpi_slot = st.container()
 
@@ -406,6 +410,12 @@ with st.container(border=True):
         min_price = p1.number_input("Min price (Cr)", min_value=0.0, step=0.25, key="min_price")
         max_price = p2.number_input("Max price (Cr)", min_value=0.0, step=0.25,
                                     key="max_price", help="0 means no limit.")
+        road = st.multiselect("Road size", road_options, key="road",
+                              format_func=lambda x: f"{x:g}")
+
+    others = st.multiselect("Others (property features)", OTHERS, key="others",
+                            placeholder="Pick features, e.g. Corner, Park Facing, Lift",
+                            help="Shows only properties that have ALL the selected features.")
 
     o1, o2, o3 = st.columns(3)
     latest_only = o1.checkbox("Latest entry per plot only", key="latest_only")
@@ -431,6 +441,10 @@ if stage:
     d = d[d["Stage of Property"].isin(stage)]
 if sources:
     d = d[d["Source of Building"].isin(sources)]
+if road:
+    d = d[d["Road Size"].isin(road)]
+for feat in others:
+    d = d[d[f"Others [{feat}]"].astype(str).str.strip().str.lower() == "yes"]
 if min_size:
     d = d[d["_size"] >= min_size]
 if max_size:
