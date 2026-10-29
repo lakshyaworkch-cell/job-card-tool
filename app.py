@@ -437,13 +437,19 @@ DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
               "hide_rows": True,      # Hide sold properties (entire row red)
               "hide_floors": True}    # Hide sold floors (red price cell)
 
+# Sidebar client details: blank at start, and wiped by "Clear all"
+CLIENT_BLANK = {"client_name": "", "client_budget": "", "client_type": "",
+                "client_rm": [], "client_contact": "", "client_visit_date": ""}
+
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
            "stage": ["RTM", "U/C"], "sources": [], "road": [], "floor_pref": [],
            "min_size": 0, "max_size": 0,
            "min_price": 0.0, "max_price": 0.0,
            **DEFAULT_ON,
-           **{f"feat_{f}": False for f in OTHERS}}
-CLEARED = {**INITIAL, "rooms": [], "stage": []}      # the four DEFAULT_ON stay ON
+           **{f"feat_{f}": False for f in OTHERS},
+           **CLIENT_BLANK}
+# the four DEFAULT_ON stay ON; client details are cleared too
+CLEARED = {**INITIAL, "rooms": [], "stage": [], **CLIENT_BLANK}
 
 # Set every default once, at the start of a new session, before any widget is drawn
 if not st.session_state.get("_defaults_applied"):
@@ -454,7 +460,8 @@ if not st.session_state.get("_defaults_applied"):
 
 def clear_filters():
     for k, v in CLEARED.items():
-        st.session_state[k] = v
+        # copy lists so the dicts above are never modified by Streamlit
+        st.session_state[k] = list(v) if isinstance(v, list) else v
 
 
 def norm(x):
@@ -472,12 +479,13 @@ def address_options(frame):
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Client details")
-    name = st.text_input("Client name")
-    budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr")
-    ctype = st.text_input("Client type")
-    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM")
-    contact = st.text_input("Contact number")
-    visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY")
+    name = st.text_input("Client name", key="client_name")
+    budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr", key="client_budget")
+    ctype = st.text_input("Client type", key="client_type")
+    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM", key="client_rm")
+    contact = st.text_input("Contact number", key="client_contact")
+    visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY",
+                               key="client_visit_date")
     st.markdown('<div class="side-note">These details are printed in the header of the '
                 'downloaded job card.</div>', unsafe_allow_html=True)
     st.write("")
