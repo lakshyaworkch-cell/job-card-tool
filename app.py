@@ -37,10 +37,11 @@ FLOORS = [
     ("Fourth Floor with Terrace Pricing", "Top (Terrace)"),
     ("Duplex (4th with terrace)", "Duplex"),
 ]
-CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
+CARD_COLS = ["Listed On", "Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
              "Facing", "Road", "Source Name", "Phone No.", "Type", "Tron Remarks",
-             "Client Reaction", "Listed On"]
+             "Client Reaction"]
 EXCEL_COLS = "ABCDEFGHIJKLMNO"
+TEMPLATE_COLS = "ABCDEFGHIJKLMN"     # the columns the original template has
 RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
@@ -179,6 +180,7 @@ def make_row(r, floors, visit_date):
     ts = r["_ts"]
     listed_on = ts.strftime("%d/%m/%Y") if pd.notna(ts) else ""
     return {
+        "Listed On": listed_on,
         "Date": visit_date,
         "Address": r["Plot No."],
         "Location": r["Locality"],
@@ -193,7 +195,6 @@ def make_row(r, floors, visit_date):
         "Type": r["Source of Building"],
         "Tron Remarks": "; ".join(out),
         "Client Reaction": "",
-        "Listed On": listed_on,
     }
 
 
@@ -239,40 +240,58 @@ def build_card(rows, header):
     ws["A5"] = label_value("Contact Number: ", header["contact"])
     ws["E5"] = label_value("Preferred Micro-Market:  ", header["markets"])
 
+    last_row = max(57, 8 + len(rows))
+
     # The template has rows 8-44 hidden, so unhide every row first
-    for r in range(8, max(ws.max_row, 8 + len(rows)) + 1):
+    for r in range(8, max(ws.max_row, last_row) + 1):
         ws.row_dimensions[r].hidden = False
         ws.row_dimensions[r].height = None
 
-    last_styled = 57
+    # Extend the table styling below row 57 if there are more rows than the template has
+    for r in range(58, last_row + 1):
+        for col in TEMPLATE_COLS:
+            src, dst = ws[f"{col}57"], ws[f"{col}{r}"]
+            dst.font = copy.copy(src.font)
+            dst.border = copy.copy(src.border)
+            dst.alignment = copy.copy(src.alignment)
+            dst.fill = copy.copy(src.fill)
+            dst.number_format = src.number_format
+
+    # Snapshot the template's table styles, headings and widths (columns A-N)
+    snap = {}
+    for r in range(7, last_row + 1):
+        for col in TEMPLATE_COLS:
+            c = ws[f"{col}{r}"]
+            snap[(r, col)] = (copy.copy(c.font), copy.copy(c.border),
+                              copy.copy(c.alignment), copy.copy(c.fill), c.number_format)
+    old_heads = {col: ws[f"{col}7"].value for col in TEMPLATE_COLS}
+    old_widths = {col: ws.column_dimensions[col].width for col in TEMPLATE_COLS}
+
+    # Shift everything one column to the right; new column A is "Listed On"
+    for i, col in enumerate(EXCEL_COLS):
+        src_col = TEMPLATE_COLS[max(i - 1, 0)]
+        for r in range(7, last_row + 1):
+            font, border, align, fill, nf = snap[(r, src_col)]
+            dst = ws[f"{col}{r}"]
+            dst.font, dst.border, dst.alignment = font, border, align
+            dst.fill, dst.number_format = fill, nf
+        if i == 0:
+            ws.column_dimensions[col].width = 13
+        elif old_widths[src_col]:
+            ws.column_dimensions[col].width = old_widths[src_col]
+        ws[f"{col}7"] = "Listed On" if i == 0 else old_heads[TEMPLATE_COLS[i - 1]]
+
+    # Fill in the data
     for i, row in enumerate(rows):
         r = 8 + i
-        if r > last_styled:
-            for col in "ABCDEFGHIJKLMN":
-                src, dst = ws[f"{col}{last_styled}"], ws[f"{col}{r}"]
-                dst.font = copy.copy(src.font)
-                dst.border = copy.copy(src.border)
-                dst.alignment = copy.copy(src.alignment)
-                dst.fill = copy.copy(src.fill)
         for col, key in zip(EXCEL_COLS, CARD_COLS):
             v = row.get(key, "")
             ws[f"{col}{r}"] = v if v != "" else None
 
-    # New "Listed On" column (O): copy the look of column N, set heading and width
-    last_row = max(57, 8 + len(rows))
-    for r in range(7, last_row + 1):
-        src, dst = ws[f"N{r}"], ws[f"O{r}"]
-        dst.font = copy.copy(src.font)
-        dst.border = copy.copy(src.border)
-        dst.alignment = copy.copy(src.alignment)
-        dst.fill = copy.copy(src.fill)
-    ws["O7"] = "Listed On"
-    ws.column_dimensions["O"].width = 13
     if ws.print_area:                       # keep the new column inside the print area
         ws.print_area = f"A1:O{last_row}"
 
     # Classic look: no colour fills anywhere, black text
-    last_row = max(57, 8 + len(rows))
     for r in range(4, last_row + 1):
         for col in EXCEL_COLS:
             ws[f"{col}{r}"].fill = NO_FILL
