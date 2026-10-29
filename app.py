@@ -39,8 +39,8 @@ FLOORS = [
 ]
 CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
              "Facing", "Road", "Source Name", "Phone No.", "Type", "Tron Remarks",
-             "Client Reaction"]
-EXCEL_COLS = "ABCDEFGHIJKLMN"
+             "Client Reaction", "Listed On"]
+EXCEL_COLS = "ABCDEFGHIJKLMNO"
 RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
@@ -176,6 +176,8 @@ def make_row(r, floors, visit_date):
     if isinstance(phone, float) and not pd.isna(phone):
         phone = int(phone)
     road = r["Road Size"]
+    ts = r["_ts"]
+    listed_on = ts.strftime("%d/%m/%Y") if pd.notna(ts) else ""
     return {
         "Date": visit_date,
         "Address": r["Plot No."],
@@ -191,6 +193,7 @@ def make_row(r, floors, visit_date):
         "Type": r["Source of Building"],
         "Tron Remarks": "; ".join(out),
         "Client Reaction": "",
+        "Listed On": listed_on,
     }
 
 
@@ -245,7 +248,7 @@ def build_card(rows, header):
     for i, row in enumerate(rows):
         r = 8 + i
         if r > last_styled:
-            for col in EXCEL_COLS:
+            for col in "ABCDEFGHIJKLMN":
                 src, dst = ws[f"{col}{last_styled}"], ws[f"{col}{r}"]
                 dst.font = copy.copy(src.font)
                 dst.border = copy.copy(src.border)
@@ -254,6 +257,19 @@ def build_card(rows, header):
         for col, key in zip(EXCEL_COLS, CARD_COLS):
             v = row.get(key, "")
             ws[f"{col}{r}"] = v if v != "" else None
+
+    # New "Listed On" column (O): copy the look of column N, set heading and width
+    last_row = max(57, 8 + len(rows))
+    for r in range(7, last_row + 1):
+        src, dst = ws[f"N{r}"], ws[f"O{r}"]
+        dst.font = copy.copy(src.font)
+        dst.border = copy.copy(src.border)
+        dst.alignment = copy.copy(src.alignment)
+        dst.fill = copy.copy(src.fill)
+    ws["O7"] = "Listed On"
+    ws.column_dimensions["O"].width = 13
+    if ws.print_area:                       # keep the new column inside the print area
+        ws.print_area = f"A1:O{last_row}"
 
     # Classic look: no colour fills anywhere, black text
     last_row = max(57, 8 + len(rows))
