@@ -1,31 +1,21 @@
 import base64
 import copy
+import html
 import io
 import re
 import zipfile
 from pathlib import Path
 
 import pandas as pd
-import requests
 import streamlit as st
 from openpyxl import load_workbook
-from openpyxl.cell.rich_text import CellRichText, TextBlock
-from openpyxl.cell.text import InlineFont
-from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, TwoCellAnchor
-from openpyxl.drawing.xdr import XDRPositiveSize2D
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils.units import pixels_to_EMU
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.page import PageMargins
+from openpyxl.worksheet.properties import PageSetupProperties
 
 BASE = Path(__file__).parent
+DATA_FILE = BASE / "Data.xlsx"
 TEMPLATE = BASE / "Naveen_Job_Card_Empty.xlsx"
-
-SHEET_ID = "1PmNgcqTg8XxcvjbX5UNaIZICaFfUUkspCTzQgz5Ctp4"
-SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=xlsx"
-SHEET_TAB = 0   # gid=0 in your link is the first tab, so 0 is correct
-
-LOGO_SCALE = 0.7        # Excel logo size: 0.7 = 70% of the template size (lower = smaller)
-LOGO_FALLBACK_H = 55    # logo height in px, used only if the template logo is anchored differently
 
 FLOORS = [
     ("First Floor Pricing", "FF"),
@@ -37,16 +27,14 @@ FLOORS = [
     ("Fourth Floor with Terrace Pricing", "Top (Terrace)"),
     ("Duplex (4th with terrace)", "Duplex"),
 ]
-CARD_COLS = ["Listed On", "Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
+CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
              "Facing", "Road", "Source Name", "Phone No.", "Type", "Tron Remarks",
              "Client Reaction"]
-EXCEL_COLS = "ABCDEFGHIJKLMNO"
-TEMPLATE_COLS = "ABCDEFGHIJKLMN"     # the columns the original template has
+EXCEL_COLS = "ABCDEFGHIJKLMN"
 RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
          ("Others [Gated]", "Gated")]
-OTHERS = ["Corner", "Resale", "Gated", "T-Point", "Park Facing"]
 
 
 def parse_price(v):
@@ -109,26 +97,14 @@ def is_red(cell):
 SOLD_ROW_MIN_RED_CELLS = 15   # a row with this many red cells counts as "entire row red"
 
 
-@st.cache_data(ttl=300, show_spinner="Loading latest data from Google Sheets...")
-def fetch_sheet_bytes():
-    r = requests.get(SHEET_URL, timeout=60)
-    r.raise_for_status()
-    if "text/html" in r.headers.get("Content-Type", ""):
-        raise RuntimeError("Google returned a login page. Set the sheet to "
-                           "'Anyone with the link can view'.")
-    return r.content
-
-
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_data():
-    raw = fetch_sheet_bytes()
-    df = pd.read_excel(io.BytesIO(raw), sheet_name=SHEET_TAB)
+    df = pd.read_excel(DATA_FILE)
     df["_size"] = df["Plot Size (Sq Yard)"].map(first_number)
     df["_ts"] = df["Timestamp"].map(to_ts)
 
-    # Read the red colouring straight from the Excel export (pandas can't see colours)
-    wb = load_workbook(io.BytesIO(raw))
-    ws = wb.worksheets[SHEET_TAB] if isinstance(SHEET_TAB, int) else wb[SHEET_TAB]
+    # Read the red colouring straight from the Excel file (pandas can't see colours)
+    ws = load_workbook(DATA_FILE).active
     header = [c.value for c in ws[1]]
     col_idx = {name: i + 1 for i, name in enumerate(header)}
     sold_row, red_floor = {}, {}
@@ -177,10 +153,7 @@ def make_row(r, floors, visit_date):
     if isinstance(phone, float) and not pd.isna(phone):
         phone = int(phone)
     road = r["Road Size"]
-    ts = r["_ts"]
-    listed_on = ts.strftime("%d/%m/%Y") if pd.notna(ts) else ""
     return {
-        "Listed On": listed_on,
         "Date": visit_date,
         "Address": r["Plot No."],
         "Location": r["Locality"],
@@ -198,114 +171,100 @@ def make_row(r, floors, visit_date):
     }
 
 
+TEAL = PatternFill("solid", fgColor="00897B")
+ZEBRA = PatternFill("solid", fgColor="EAF5F3")
 NO_FILL = PatternFill(fill_type=None)
-
-
-def label_value(label, value):
-    """Rich text: label in normal weight, the value we filled in bold."""
-    base = dict(rFont="Calibri", sz=12)
-    parts = [TextBlock(InlineFont(b=False, **base), label)]
-    if value:
-        parts.append(TextBlock(InlineFont(b=True, **base), str(value)))
-    return CellRichText(*parts)
-
-
-def shrink_logos(ws):
-    """Make the logo(s) in the sheet smaller."""
-    for img in ws._images:
-        a = img.anchor
-        if isinstance(a, OneCellAnchor):
-            a.ext.width = int(a.ext.width * LOGO_SCALE)
-            a.ext.height = int(a.ext.height * LOGO_SCALE)
-        elif isinstance(a, TwoCellAnchor):
-            h = LOGO_FALLBACK_H
-            w = h * img.width / max(img.height, 1)
-            img.anchor = OneCellAnchor(
-                _from=a._from,
-                ext=XDRPositiveSize2D(pixels_to_EMU(int(w)), pixels_to_EMU(int(h))))
-        else:                                      # plain cell-name anchor
-            img.width = int(img.width * LOGO_SCALE)
-            img.height = int(img.height * LOGO_SCALE)
+SIDE = Side(style="thin", color="333333")
+BOX = Border(left=SIDE, right=SIDE, top=SIDE, bottom=SIDE)
+WHITE_BOLD = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+BODY_FONT = Font(name="Calibri", size=11)
+WRAP_COLS = "CFJM"                       # columns whose text wraps onto a second line
+# (min width, max width) for each column A..N
+COL_LIMITS = {"A": (12, 14), "B": (11, 16), "C": (16, 26), "D": (10, 12), "E": (8, 10),
+              "F": (14, 24), "G": (12, 22), "H": (8, 10), "I": (7, 9), "J": (14, 24),
+              "K": (13, 15), "L": (10, 12), "M": (22, 36), "N": (22, 30)}
 
 
 def build_card(rows, header):
     wb = load_workbook(TEMPLATE)
     ws = wb["Naveen"]
+    ws["A4"] = f"Client Name:   {header['name']}"
+    ws["E4"] = f"Budget Range: {header['budget']}"
+    ws["I4"] = f"Client Type:  {header['ctype']}"
+    ws["M4"] = f"RM: {header['rm']}"
+    ws["A5"] = f"Contact Number: {header['contact']}"
+    ws["E5"] = f"Preferred Micro-Market:  {header['markets']}"
 
-    # Top info: labels normal, our entries bold
-    ws["A4"] = label_value("Client Name:   ", header["name"])
-    ws["E4"] = label_value("Budget Range: ", header["budget"])
-    ws["I4"] = label_value("Client Type:  ", header["ctype"])
-    ws["M4"] = label_value("RM: ", header["rm"])
-    ws["A5"] = label_value("Contact Number: ", header["contact"])
-    ws["E5"] = label_value("Preferred Micro-Market:  ", header["markets"])
+    # Client band (rows 4-5): teal, white bold text, one consistent dark border all round
+    for r in (4, 5):
+        for col in EXCEL_COLS:
+            cell = ws[f"{col}{r}"]
+            cell.fill = TEAL
+            cell.font = WHITE_BOLD
+            cell.border = BOX
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[r].height = 20
 
-    last_row = max(57, 8 + len(rows))
+    # Row 6 is only a thin spacer: no boxes, no borders
+    for col in EXCEL_COLS:
+        cell = ws[f"{col}6"]
+        cell.value = None
+        cell.fill = NO_FILL
+        cell.border = Border()
+    ws.row_dimensions[6].height = 6
 
-    # The template has rows 8-44 hidden, so unhide every row first
-    for r in range(8, max(ws.max_row, last_row) + 1):
-        ws.row_dimensions[r].hidden = False
+    # Column headings (row 7)
+    for col in EXCEL_COLS:
+        cell = ws[f"{col}7"]
+        cell.fill = TEAL
+        cell.font = WHITE_BOLD
+        cell.border = BOX
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[7].height = 24
+
+    # Data rows: identical font, border and alignment everywhere, light zebra stripes
+    last = 7 + len(rows)
+    for r in range(8, max(ws.max_row, last) + 1):
+        ws.row_dimensions[r].hidden = False      # the old template had rows hidden
         ws.row_dimensions[r].height = None
-
-    # Extend the table styling below row 57 if there are more rows than the template has
-    for r in range(58, last_row + 1):
-        for col in TEMPLATE_COLS:
-            src, dst = ws[f"{col}57"], ws[f"{col}{r}"]
-            dst.font = copy.copy(src.font)
-            dst.border = copy.copy(src.border)
-            dst.alignment = copy.copy(src.alignment)
-            dst.fill = copy.copy(src.fill)
-            dst.number_format = src.number_format
-
-    # Snapshot the template's table styles, headings and widths (columns A-N)
-    snap = {}
-    for r in range(7, last_row + 1):
-        for col in TEMPLATE_COLS:
-            c = ws[f"{col}{r}"]
-            snap[(r, col)] = (copy.copy(c.font), copy.copy(c.border),
-                              copy.copy(c.alignment), copy.copy(c.fill), c.number_format)
-    old_heads = {col: ws[f"{col}7"].value for col in TEMPLATE_COLS}
-    old_widths = {col: ws.column_dimensions[col].width for col in TEMPLATE_COLS}
-
-    # Shift everything one column to the right; new column A is "Listed On"
-    for i, col in enumerate(EXCEL_COLS):
-        src_col = TEMPLATE_COLS[max(i - 1, 0)]
-        for r in range(7, last_row + 1):
-            font, border, align, fill, nf = snap[(r, src_col)]
-            dst = ws[f"{col}{r}"]
-            dst.font, dst.border, dst.alignment = font, border, align
-            dst.fill, dst.number_format = fill, nf
-        if i == 0:
-            ws.column_dimensions[col].width = 13
-        elif old_widths[src_col]:
-            ws.column_dimensions[col].width = old_widths[src_col]
-        ws[f"{col}7"] = "Listed On" if i == 0 else old_heads[TEMPLATE_COLS[i - 1]]
-
-    # Fill in the data
     for i, row in enumerate(rows):
         r = 8 + i
         for col, key in zip(EXCEL_COLS, CARD_COLS):
             v = row.get(key, "")
-            ws[f"{col}{r}"] = v if v != "" else None
+            cell = ws[f"{col}{r}"]
+            cell.value = v if v != "" else None
+            cell.font = BODY_FONT
+            cell.border = BOX
+            cell.fill = ZEBRA if i % 2 else NO_FILL
+            cell.alignment = Alignment(horizontal="center", vertical="center",
+                                       wrap_text=col in WRAP_COLS)
 
-    if ws.print_area:                       # keep the new column inside the print area
-        ws.print_area = f"A1:O{last_row}"
+    # Remove every spare empty row below the data
+    if ws.max_row > last:
+        ws.delete_rows(last + 1, ws.max_row - last)
+    for r in [k for k in ws.row_dimensions if k > last]:
+        del ws.row_dimensions[r]
 
-    # Classic look: no colour fills anywhere, black text
-    for r in range(4, last_row + 1):
-        for col in EXCEL_COLS:
-            ws[f"{col}{r}"].fill = NO_FILL
-    for r in (4, 5):                               # normal weight base for info band
-        for col in EXCEL_COLS:
-            ws[f"{col}{r}"].font = Font(name="Calibri", size=12, bold=False, color="000000")
-    for col in EXCEL_COLS:                         # column headings
-        ws[f"{col}7"].font = Font(name="Calibri", size=12, bold=True, color="000000")
+    # Column widths that fit the content
+    for k in list(ws.column_dimensions.keys()):
+        del ws.column_dimensions[k]
+    for col, key in zip(EXCEL_COLS, CARD_COLS):
+        lo, hi = COL_LIMITS[col]
+        longest = max([len(key)] + [len(str(row.get(key, ""))) for row in rows])
+        ws.column_dimensions[col].width = max(lo, min(hi, longest + 3))
 
-    # Margins: 0.25" on all sides
+    # Print setup: A4 landscape, 0.25 inch margins, one page wide, headings repeat
+    ws.sheet_view.showGridLines = False
     ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.25, bottom=0.25,
                                   header=0.1, footer=0.1)
-
-    shrink_logos(ws)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = 9
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.print_options.horizontalCentered = True
+    ws.print_title_rows = "7:7"
+    ws.print_area = f"A1:N{last}"
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -423,75 +382,19 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 </style>
 """, unsafe_allow_html=True)
 
-try:
-    df = load_data()
-except Exception as e:
-    st.error(f"Could not load data from Google Sheets: {e}")
-    st.stop()
-
-# ---------------------------------------------------------------- DEFAULTS
-# These four checkboxes are ON by default (and stay ON after "Clear all"):
-#   Lift & Stilt Parking, Latest entry per plot, Hide sold properties, Hide sold floors
-DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
-              "latest_only": True,    # Latest entry per plot only
-              "hide_rows": True,      # Hide sold properties (entire row red)
-              "hide_floors": True}    # Hide sold floors (red price cell)
-
-# Sidebar client details: blank at start, and wiped by "Clear all"
-CLIENT_BLANK = {"client_name": "", "client_budget": "", "client_type": "",
-                "client_rm": [], "client_contact": "", "client_visit_date": ""}
-
-INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
-           "stage": ["RTM", "U/C"], "sources": [], "road": [], "floor_pref": [],
-           "min_size": 0, "max_size": 0,
-           "min_price": 0.0, "max_price": 0.0,
-           **DEFAULT_ON,
-           **{f"feat_{f}": False for f in OTHERS},
-           **CLIENT_BLANK}
-# the four DEFAULT_ON stay ON; client details are cleared too
-CLEARED = {**INITIAL, "rooms": [], "stage": [], **CLIENT_BLANK}
-
-# Set every default once, at the start of a new session, before any widget is drawn
-if not st.session_state.get("_defaults_applied"):
-    for k, v in INITIAL.items():
-        st.session_state[k] = v
-    st.session_state["_defaults_applied"] = True
-
-
-def clear_filters():
-    for k, v in CLEARED.items():
-        # copy lists so the dicts above are never modified by Streamlit
-        st.session_state[k] = list(v) if isinstance(v, list) else v
-
-
-def norm(x):
-    return re.sub(r"[^a-z0-9]", "", str(x).lower())
-
-
-@st.cache_data
-def address_options(frame):
-    """Labels like 'A-1084 · Sushant Lok 1' -> (normalised plot no., locality)."""
-    pairs = frame[["Plot No.", "Locality"]].dropna().astype(str).drop_duplicates()
-    lookup = {f"{p.strip()} · {l}": (norm(p), l) for p, l in zip(pairs["Plot No."], pairs["Locality"])}
-    return sorted(lookup), lookup
-
+df = load_data()
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Client details")
-    name = st.text_input("Client name", key="client_name")
-    budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr", key="client_budget")
-    ctype = st.text_input("Client type", key="client_type")
-    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM", key="client_rm")
-    contact = st.text_input("Contact number", key="client_contact")
-    visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY",
-                               key="client_visit_date")
+    name = st.text_input("Client name")
+    budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr")
+    ctype = st.text_input("Client type")
+    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM")
+    contact = st.text_input("Contact number")
+    visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY")
     st.markdown('<div class="side-note">These details are printed in the header of the '
                 'downloaded job card.</div>', unsafe_allow_html=True)
-    st.write("")
-    if st.button("🔄 Refresh data from Google Sheet", width="stretch"):
-        st.cache_data.clear()
-        st.rerun()
 
 # ---------------------------------------------------------------- hero
 logo_tag = ""
@@ -511,8 +414,35 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- filters
+INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
+           "stage": ["RTM", "U/C"], "sources": [], "road": [], "others": [], "floor_pref": [], "lift_stilt": True, "min_size": 0, "max_size": 0,
+           "min_price": 0.0, "max_price": 0.0, "latest_only": True,
+           "hide_rows": True, "hide_floors": True}
+CLEARED = {**INITIAL, "rooms": [], "stage": []}
+for k, v in INITIAL.items():
+    st.session_state.setdefault(k, v)
+
+
+def clear_filters():
+    for k, v in CLEARED.items():
+        st.session_state[k] = v
+
+
+def norm(x):
+    return re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+@st.cache_data
+def address_options(frame):
+    """Labels like 'A-1084 · Sushant Lok 1' -> (normalised plot no., locality)."""
+    pairs = frame[["Plot No.", "Locality"]].dropna().astype(str).drop_duplicates()
+    lookup = {f"{p.strip()} · {l}": (norm(p), l) for p, l in zip(pairs["Plot No."], pairs["Locality"])}
+    return sorted(lookup), lookup
+
+
 addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
 
+OTHERS = ["Corner", "Resale", "Gated", "T-Point", "Park Facing"]
 FLOOR_NAMES = {"FF": "First Floor (FF)", "FF+Bsmt": "First Floor + Basement", "Triplex": "Triplex",
                "SF": "Second Floor (SF)", "TF": "Third Floor (TF)", "Top": "Fourth / Top Floor",
                "Top (Terrace)": "Top Floor with Terrace", "Duplex": "Duplex"}
@@ -551,20 +481,16 @@ with st.container(border=True):
         road = st.multiselect("Road size", road_options, key="road",
                               format_func=lambda x: f"{x:g}")
 
-    fp_col, _ = st.columns([1, 2])
-    floor_pref = fp_col.multiselect("Floor preference", list(FLOOR_NAMES), key="floor_pref",
-                                    format_func=lambda x: FLOOR_NAMES[x],
-                                    placeholder="Any floor",
-                                    help="Shows only the selected floors, and only properties that have one of them available.")
-
-    st.markdown('<div class="mini-label">Property features (tick to require)</div>',
-                unsafe_allow_html=True)
-    fcols = st.columns([1.6, 1, 1, 1, 1, 1.2])
-    lift_stilt = fcols[0].checkbox("Lift & Stilt Parking", key="lift_stilt")
-    selected_feats = []
-    for col, feat in zip(fcols[1:], OTHERS):
-        if col.checkbox(feat, key=f"feat_{feat}"):
-            selected_feats.append(feat)
+    f1, f2, f3 = st.columns(3)
+    floor_pref = f1.multiselect("Floor preference", list(FLOOR_NAMES), key="floor_pref",
+                                format_func=lambda x: FLOOR_NAMES[x],
+                                placeholder="Any floor",
+                                help="Shows only the selected floors, and only properties that have one of them available.")
+    others = f2.multiselect("Others (property features)", OTHERS, key="others",
+                            placeholder="Pick features",
+                            help="Shows only properties that have ALL the selected features.")
+    f3.markdown('<div class="mini-label">Required features</div>', unsafe_allow_html=True)
+    lift_stilt = f3.checkbox("Lift & Stilt Parking required", key="lift_stilt")
 
     o1, o2, o3 = st.columns(3)
     latest_only = o1.checkbox("Latest entry per plot only", key="latest_only")
@@ -595,7 +521,7 @@ if road:
 if lift_stilt:
     for col in ("Others [Lift]", "Others [Stilt Parking]"):
         d = d[d[col].astype(str).str.strip().str.lower() == "yes"]
-for feat in selected_feats:
+for feat in others:
     d = d[d[f"Others [{feat}]"].astype(str).str.strip().str.lower() == "yes"]
 if min_size:
     d = d[d["_size"] >= min_size]
