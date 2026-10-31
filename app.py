@@ -9,9 +9,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.worksheet.page import PageMargins
-from openpyxl.worksheet.properties import PageSetupProperties
+from openpyxl.styles import Font, PatternFill
 
 BASE = Path(__file__).parent
 DATA_FILE = BASE / "Data.xlsx"
@@ -172,17 +170,6 @@ def make_row(r, floors, visit_date):
 
 
 TEAL = PatternFill("solid", fgColor="00897B")
-ZEBRA = PatternFill("solid", fgColor="EAF5F3")
-NO_FILL = PatternFill(fill_type=None)
-SIDE = Side(style="thin", color="333333")
-BOX = Border(left=SIDE, right=SIDE, top=SIDE, bottom=SIDE)
-WHITE_BOLD = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
-BODY_FONT = Font(name="Calibri", size=11)
-WRAP_COLS = "CFJM"                       # columns whose text wraps onto a second line
-# (min width, max width) for each column A..N
-COL_LIMITS = {"A": (12, 14), "B": (11, 16), "C": (16, 26), "D": (10, 12), "E": (8, 10),
-              "F": (14, 24), "G": (12, 22), "H": (8, 10), "I": (7, 9), "J": (14, 24),
-              "K": (13, 15), "L": (10, 12), "M": (22, 36), "N": (22, 30)}
 
 
 def build_card(rows, header):
@@ -195,77 +182,31 @@ def build_card(rows, header):
     ws["A5"] = f"Contact Number: {header['contact']}"
     ws["E5"] = f"Preferred Micro-Market:  {header['markets']}"
 
-    # Client band (rows 4-5): teal, white bold text, one consistent dark border all round
-    for r in (4, 5):
+    # Teal fill with white bold text: client info band and column headings
+    for r in (4, 5, 7):
         for col in EXCEL_COLS:
             cell = ws[f"{col}{r}"]
             cell.fill = TEAL
-            cell.font = WHITE_BOLD
-            cell.border = BOX
-            cell.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[r].height = 20
+            cell.font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
 
-    # Row 6 is only a thin spacer: no boxes, no borders
-    for col in EXCEL_COLS:
-        cell = ws[f"{col}6"]
-        cell.value = None
-        cell.fill = NO_FILL
-        cell.border = Border()
-    ws.row_dimensions[6].height = 6
-
-    # Column headings (row 7)
-    for col in EXCEL_COLS:
-        cell = ws[f"{col}7"]
-        cell.fill = TEAL
-        cell.font = WHITE_BOLD
-        cell.border = BOX
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[7].height = 24
-
-    # Data rows: identical font, border and alignment everywhere, light zebra stripes
-    last = 7 + len(rows)
-    for r in range(8, max(ws.max_row, last) + 1):
-        ws.row_dimensions[r].hidden = False      # the old template had rows hidden
+    # The template has rows 8-44 hidden, so unhide every row first
+    for r in range(8, max(ws.max_row, 8 + len(rows)) + 1):
+        ws.row_dimensions[r].hidden = False
         ws.row_dimensions[r].height = None
+
+    last_styled = 57
     for i, row in enumerate(rows):
         r = 8 + i
+        if r > last_styled:
+            for col in EXCEL_COLS:
+                src, dst = ws[f"{col}{last_styled}"], ws[f"{col}{r}"]
+                dst.font = copy.copy(src.font)
+                dst.border = copy.copy(src.border)
+                dst.alignment = copy.copy(src.alignment)
+                dst.fill = copy.copy(src.fill)
         for col, key in zip(EXCEL_COLS, CARD_COLS):
             v = row.get(key, "")
-            cell = ws[f"{col}{r}"]
-            cell.value = v if v != "" else None
-            cell.font = BODY_FONT
-            cell.border = BOX
-            cell.fill = ZEBRA if i % 2 else NO_FILL
-            cell.alignment = Alignment(horizontal="center", vertical="center",
-                                       wrap_text=col in WRAP_COLS)
-
-    # Remove every spare empty row below the data
-    if ws.max_row > last:
-        ws.delete_rows(last + 1, ws.max_row - last)
-    for r in [k for k in ws.row_dimensions if k > last]:
-        del ws.row_dimensions[r]
-
-    # Column widths that fit the content
-    for k in list(ws.column_dimensions.keys()):
-        del ws.column_dimensions[k]
-    for col, key in zip(EXCEL_COLS, CARD_COLS):
-        lo, hi = COL_LIMITS[col]
-        longest = max([len(key)] + [len(str(row.get(key, ""))) for row in rows])
-        ws.column_dimensions[col].width = max(lo, min(hi, longest + 3))
-
-    # Print setup: A4 landscape, 0.25 inch margins, one page wide, headings repeat
-    ws.sheet_view.showGridLines = False
-    ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.25, bottom=0.25,
-                                  header=0.1, footer=0.1)
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.paperSize = 9
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.print_options.horizontalCentered = True
-    ws.print_title_rows = "7:7"
-    ws.print_area = f"A1:N{last}"
-
+            ws[f"{col}{r}"] = v if v != "" else None
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
