@@ -421,11 +421,16 @@ DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
               "hide_rows": True,      # Hide sold properties (entire row red)
               "hide_floors": True}    # Hide sold floors (red price cell)
 
+# Client details in the sidebar (emptied by "Clear all")
+CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": "",
+                 "cl_rm": [], "cl_contact": "", "cl_visit": ""}
+
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
            "stage": ["RTM", "U/C"], "sources": [], "road": [], "floor_pref": [],
            "min_size": 0, "max_size": 0,
            "min_price": 0.0, "max_price": 0.0,
            **DEFAULT_ON,
+           **CLIENT_FIELDS,
            **{f"feat_{f}": False for f in OTHERS}}
 CLEARED = {**INITIAL, "rooms": [], "stage": []}      # the DEFAULT_ON ones stay ON
 
@@ -437,6 +442,7 @@ if not st.session_state.get("_defaults_applied"):
 
 
 def clear_filters():
+    """Reset all filters AND the client details in the sidebar."""
     for k, v in CLEARED.items():
         st.session_state[k] = v
 
@@ -456,14 +462,14 @@ def address_options(frame):
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Client details")
-    name = st.text_input("Client name")
-    budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr")
-    ctype = st.text_input("Client type")
-    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM")
-    contact = st.text_input("Contact number")
-    visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY")
+    name = st.text_input("Client name", key="cl_name")
+    budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr", key="cl_budget")
+    ctype = st.text_input("Client type", key="cl_ctype")
+    rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM", key="cl_rm")
+    contact = st.text_input("Contact number", key="cl_contact")
+    visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY", key="cl_visit")
     st.markdown('<div class="side-note">These details are printed in the header of the '
-                'downloaded job card.</div>', unsafe_allow_html=True)
+                'downloaded job card. "Clear all" empties them too.</div>', unsafe_allow_html=True)
     st.write("")
     if st.button("🔄 Refresh data from Google Sheet", width="stretch"):
         st.cache_data.clear()
