@@ -37,16 +37,16 @@ FLOORS = [
     ("Fourth Floor with Terrace Pricing", "Top (Terrace)"),
     ("Duplex (4th with terrace)", "Duplex"),
 ]
-CARD_COLS = ["Listed On", "Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
+CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Price",
              "Facing", "Road", "Source Name", "Phone No.", "Type", "Tron Remarks",
              "Client Reaction"]
-EXCEL_COLS = "ABCDEFGHIJKLMNO"
-TEMPLATE_COLS = "ABCDEFGHIJKLMN"     # the columns the original template has
+EXCEL_COLS = "ABCDEFGHIJKLMN"
 RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
          ("Others [Gated]", "Gated")]
-OTHERS = ["Corner", "Resale", "Gated", "T-Point", "Park Facing"]
+# Feature tick boxes that REQUIRE the feature (Resale is handled separately: include / hide)
+OTHERS = ["Corner", "Gated", "T-Point", "Park Facing"]
 
 
 def parse_price(v):
@@ -177,11 +177,8 @@ def make_row(r, floors, visit_date):
     if isinstance(phone, float) and not pd.isna(phone):
         phone = int(phone)
     road = r["Road Size"]
-    ts = r["_ts"]
-    listed_on = ts.strftime("%d/%m/%Y") if pd.notna(ts) else ""
     return {
-        "Listed On": listed_on,
-        "Date": visit_date,
+        "Date": visit_date,          # stays empty unless a visit date is typed in the sidebar
         "Address": r["Plot No."],
         "Location": r["Locality"],
         "Property": str(r["Rooms"]).replace(" ", ""),
@@ -232,13 +229,25 @@ def build_card(rows, header):
     wb = load_workbook(TEMPLATE)
     ws = wb["Naveen"]
 
-    # Top info: labels normal, our entries bold
-    ws["A4"] = label_value("Client Name:   ", header["name"])
-    ws["E4"] = label_value("Budget Range: ", header["budget"])
-    ws["I4"] = label_value("Client Type:  ", header["ctype"])
-    ws["M4"] = label_value("RM: ", header["rm"])
-    ws["A5"] = label_value("Contact Number: ", header["contact"])
-    ws["E5"] = label_value("Preferred Micro-Market:  ", header["markets"])
+    client = (header.get("name") or "").strip()
+
+    # Remove the template's placeholder client name ("Naveen") from the top rows
+    for row in ws.iter_rows(min_row=1, max_row=6):
+        for c in row:
+            if isinstance(c.value, str) and "Naveen" in c.value:
+                c.value = c.value.replace("Naveen", client).strip() or None
+
+    # Top info: labels normal, our entries bold (empty if nothing was filled in)
+    ws["A4"] = label_value("Client Name:   ", client)
+    ws["E4"] = label_value("Budget Range: ", (header.get("budget") or "").strip())
+    ws["I4"] = label_value("Client Type:  ", (header.get("ctype") or "").strip())
+    ws["M4"] = label_value("RM: ", (header.get("rm") or "").strip())
+    ws["A5"] = label_value("Contact Number: ", (header.get("contact") or "").strip())
+    ws["E5"] = label_value("Preferred Micro-Market:  ", (header.get("markets") or "").strip())
+
+    # Sheet tab name: the client's name, or a neutral name if none was entered
+    tab = re.sub(r"[\[\]:*?/\\]", "", client)[:31].strip()
+    ws.title = tab or "Job Card"
 
     last_row = max(57, 8 + len(rows))
 
@@ -249,7 +258,7 @@ def build_card(rows, header):
 
     # Extend the table styling below row 57 if there are more rows than the template has
     for r in range(58, last_row + 1):
-        for col in TEMPLATE_COLS:
+        for col in EXCEL_COLS:
             src, dst = ws[f"{col}57"], ws[f"{col}{r}"]
             dst.font = copy.copy(src.font)
             dst.border = copy.copy(src.border)
@@ -257,39 +266,12 @@ def build_card(rows, header):
             dst.fill = copy.copy(src.fill)
             dst.number_format = src.number_format
 
-    # Snapshot the template's table styles, headings and widths (columns A-N)
-    snap = {}
-    for r in range(7, last_row + 1):
-        for col in TEMPLATE_COLS:
-            c = ws[f"{col}{r}"]
-            snap[(r, col)] = (copy.copy(c.font), copy.copy(c.border),
-                              copy.copy(c.alignment), copy.copy(c.fill), c.number_format)
-    old_heads = {col: ws[f"{col}7"].value for col in TEMPLATE_COLS}
-    old_widths = {col: ws.column_dimensions[col].width for col in TEMPLATE_COLS}
-
-    # Shift everything one column to the right; new column A is "Listed On"
-    for i, col in enumerate(EXCEL_COLS):
-        src_col = TEMPLATE_COLS[max(i - 1, 0)]
-        for r in range(7, last_row + 1):
-            font, border, align, fill, nf = snap[(r, src_col)]
-            dst = ws[f"{col}{r}"]
-            dst.font, dst.border, dst.alignment = font, border, align
-            dst.fill, dst.number_format = fill, nf
-        if i == 0:
-            ws.column_dimensions[col].width = 13
-        elif old_widths[src_col]:
-            ws.column_dimensions[col].width = old_widths[src_col]
-        ws[f"{col}7"] = "Listed On" if i == 0 else old_heads[TEMPLATE_COLS[i - 1]]
-
-    # Fill in the data
+    # Fill in the data (the Date column stays empty unless a visit date was typed)
     for i, row in enumerate(rows):
         r = 8 + i
         for col, key in zip(EXCEL_COLS, CARD_COLS):
             v = row.get(key, "")
             ws[f"{col}{r}"] = v if v != "" else None
-
-    if ws.print_area:                       # keep the new column inside the print area
-        ws.print_area = f"A1:O{last_row}"
 
     # Classic look: no colour fills anywhere, black text
     for r in range(4, last_row + 1):
@@ -430,9 +412,11 @@ except Exception as e:
     st.stop()
 
 # ---------------------------------------------------------------- DEFAULTS
-# These four checkboxes are ON by default (and stay ON after "Clear all"):
-#   Lift & Stilt Parking, Latest entry per plot, Hide sold properties, Hide sold floors
+# These boxes are ON by default (and stay ON after "Clear all"):
+#   Lift & Stilt Parking, Resale (include), Latest entry per plot,
+#   Hide sold properties, Hide sold floors
 DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
+              "show_resale": True,    # Resale listings: ticked = shown, unticked = hidden
               "latest_only": True,    # Latest entry per plot only
               "hide_rows": True,      # Hide sold properties (entire row red)
               "hide_floors": True}    # Hide sold floors (red price cell)
@@ -443,7 +427,7 @@ INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
            "min_price": 0.0, "max_price": 0.0,
            **DEFAULT_ON,
            **{f"feat_{f}": False for f in OTHERS}}
-CLEARED = {**INITIAL, "rooms": [], "stage": []}      # the four DEFAULT_ON stay ON
+CLEARED = {**INITIAL, "rooms": [], "stage": []}      # the DEFAULT_ON ones stay ON
 
 # Set every default once, at the start of a new session, before any widget is drawn
 if not st.session_state.get("_defaults_applied"):
@@ -549,13 +533,17 @@ with st.container(border=True):
                                     placeholder="Any floor",
                                     help="Shows only the selected floors, and only properties that have one of them available.")
 
-    st.markdown('<div class="mini-label">Property features (tick to require)</div>',
-                unsafe_allow_html=True)
-    fcols = st.columns([1.6, 1, 1, 1, 1, 1.2])
-    lift_stilt = fcols[0].checkbox("Lift & Stilt Parking", key="lift_stilt")
+    st.markdown('<div class="mini-label">Property features</div>', unsafe_allow_html=True)
+    fcols = st.columns([1.6, 1.2, 1, 1, 1, 1.2])
+    lift_stilt = fcols[0].checkbox("Lift & Stilt Parking", key="lift_stilt",
+                                   help="Tick to show only properties with both lift and stilt parking.")
+    show_resale = fcols[1].checkbox("Resale", key="show_resale",
+                                    help="Ticked: resale properties are included. "
+                                         "Unticked: resale properties are hidden.")
     selected_feats = []
-    for col, feat in zip(fcols[1:], OTHERS):
-        if col.checkbox(feat, key=f"feat_{feat}"):
+    for col, feat in zip(fcols[2:], OTHERS):
+        if col.checkbox(feat, key=f"feat_{feat}",
+                        help="Tick to show only properties that have this feature."):
             selected_feats.append(feat)
 
     o1, o2, o3 = st.columns(3)
@@ -587,6 +575,8 @@ if road:
 if lift_stilt:
     for col in ("Others [Lift]", "Others [Stilt Parking]"):
         d = d[d[col].astype(str).str.strip().str.lower() == "yes"]
+if not show_resale:                       # Resale unticked -> hide all resale properties
+    d = d[d["Others [Resale]"].astype(str).str.strip().str.lower() != "yes"]
 for feat in selected_feats:
     d = d[d[f"Others [{feat}]"].astype(str).str.strip().str.lower() == "yes"]
 if min_size:
@@ -617,7 +607,7 @@ for _, r in d.iterrows():
     if not fl:
         continue
     all_prices += [n for _, nums, _ in fl for n in nums]
-    rows.append(make_row(r, fl, visit_date))
+    rows.append(make_row(r, fl, visit_date.strip()))
 
 rows.sort(key=lambda x: (x["Location"], first_number(x["Size"]), str(x["Address"])))
 
