@@ -150,6 +150,21 @@ def load_data():
         return out
 
     df["_floors"] = df.apply(floors_of, axis=1)
+
+    # "Latest entry" logic, floor by floor: for each plot, a floor belongs to the most
+    # recent entry that lists it. So if entry A (later) has floors 1 and 2 (sold) and
+    # entry B (earlier) has floor 3, floor 3 still comes from B and is not lost.
+    seen, latest = set(), {}
+    ordered = df.sort_values("_ts", ascending=False, kind="stable", na_position="last")
+    for idx, r in ordered.iterrows():
+        key = (str(r["Plot No."]).strip().lower(), str(r["Locality"]).strip().lower())
+        mine = []
+        for fl in r["_floors"]:
+            if (key, fl[0]) not in seen:
+                seen.add((key, fl[0]))
+                mine.append(fl)
+        latest[idx] = mine
+    df["_floors_latest"] = [latest[i] for i in df.index]
     return df
 
 
@@ -322,6 +337,7 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 :root {
   --teal:#14B8A6; --teal-600:#0D9488; --teal-700:#0F766E; --teal-900:#064E4A;
+  --accent:#FF4B4B;   /* same pink-red as the tick boxes */
   --bg:#0B1F1E; --card:#102A28; --card-2:#143633; --line:#1F4A46;
   --text:#E6F4F1; --muted:#8FB5B0;
 }
@@ -365,9 +381,9 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 [data-baseweb="select"] > div, [data-baseweb="input"], [data-baseweb="base-input"], .stNumberInput input, .stTextInput input {
         background:#0B1F1E !important; border-color:var(--line) !important; border-radius:10px !important; color:var(--text) !important; }
 [data-baseweb="select"] > div:hover, [data-baseweb="input"]:hover { border-color:var(--teal-600) !important; }
-[data-baseweb="tag"] { background:var(--teal-600) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
+[data-baseweb="tag"] { background:var(--accent) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
 [data-baseweb="tag"] span { color:#fff !important; }
-[data-testid="stMultiSelectTagsContainer"] > span > span { background:var(--teal-600) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
+[data-testid="stMultiSelectTagsContainer"] > span > span { background:var(--accent) !important; color:#fff !important; border-radius:6px !important; font-weight:600; }
 [data-testid="stMultiSelectTagsContainer"] > span > span * { color:#fff !important; }
 [data-testid="stCheckbox"] label p { text-transform:none !important; letter-spacing:0; font-size:.88rem !important; color:var(--text) !important; font-weight:500 !important; }
 
@@ -553,19 +569,26 @@ with st.container(border=True):
             selected_feats.append(feat)
 
     o1, o2, o3 = st.columns(3)
-    latest_only = o1.checkbox("Latest entry per plot only", key="latest_only")
+    latest_only = o1.checkbox("Latest entry per plot only", key="latest_only",
+                              help="For each plot, every floor is taken from the most recent "
+                                   "entry that lists it.")
     hide_sold_rows = o2.checkbox("Hide sold properties (entire row red)", key="hide_rows")
     hide_sold_floors = o3.checkbox("Hide sold floors (red price cell)", key="hide_floors")
 
 # ---------------------------------------------------------------- filtering
 d = df.copy()
-if latest_only:
-    d = d.sort_values("_ts", ascending=False).drop_duplicates(["Plot No.", "Locality"])
+
+# With "Latest entry" ON, each entry only keeps the floors it is the latest source for
+# (worked out floor by floor in load_data). Otherwise every entry keeps all its floors.
+floor_col = "_floors_latest" if latest_only else "_floors"
+
 n_sold_hidden = 0
 if hide_sold_rows:
-    n_before = len(d)
+    # Sold entries are removed AFTER the latest-per-floor decision, so a sold later entry
+    # no longer hides floors that only an earlier entry lists.
+    sold_shown = d["_sold"] & (d[floor_col].map(len) > 0)
+    n_sold_hidden = int(sold_shown.sum())
     d = d[~d["_sold"]]
-    n_sold_hidden = n_before - len(d)
 if localities:
     d = d[d["Locality"].isin(localities)]
 if facing:
@@ -606,7 +629,7 @@ if addr:
 
 rows, all_prices = [], []
 for _, r in d.iterrows():
-    fl = [(lab, nums, txt) for lab, nums, txt, red in r["_floors"]
+    fl = [(lab, nums, txt) for lab, nums, txt, red in r[floor_col]
           if not (hide_sold_floors and red and not r["_sold"])
           and (not floor_pref or lab in floor_pref)
           and any(n >= min_price and (not max_price or n <= max_price) for n in nums)]
