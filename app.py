@@ -169,10 +169,15 @@ def load_data():
     # "Latest entry" logic, floor by floor: for each plot, a floor belongs to the most
     # recent entry that lists it. So if entry A (later) has floors 1 and 2 (sold) and
     # entry B (earlier) has floor 3, floor 3 still comes from B and is not lost.
+    # A row with no Plot No. is treated as its own plot (never merged with other blanks).
     seen, latest = set(), {}
     ordered = df.sort_values("_ts", ascending=False, kind="stable", na_position="last")
     for idx, r in ordered.iterrows():
-        key = (str(r["Plot No."]).strip().lower(), str(r["Locality"]).strip().lower())
+        plot = r["Plot No."]
+        if plot is None or (not isinstance(plot, str) and pd.isna(plot)) or not str(plot).strip():
+            key = ("__row__", idx)
+        else:
+            key = (str(plot).strip().lower(), str(r["Locality"]).strip().lower())
         mine = []
         for fl in r["_floors"]:
             if (key, fl[0]) not in seen:
@@ -507,6 +512,8 @@ with st.sidebar:
     if st.button("🔄 Refresh data from Google Sheet", width="stretch"):
         st.cache_data.clear()
         st.rerun()
+    st.markdown(f'<div class="side-note">{len(df)} rows read from the Google Sheet.</div>',
+                unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- hero
 logo_tag = ""
