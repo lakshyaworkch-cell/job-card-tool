@@ -134,6 +134,10 @@ def load_data():
     raw = fetch_sheet_bytes()
     df = pd.read_excel(io.BytesIO(raw), sheet_name=SHEET_TAB)
     df["Road Size"] = df["Road Size"].map(road_num)      # clean numbers only (junk -> blank)
+    # Text columns used in dropdowns: blanks become "" so sorting never mixes numbers and text
+    for c in ("Locality", "Plot Facing", "Rooms", "Source of Building", "Stage of Property"):
+        df[c] = df[c].map(lambda v: "" if v is None or (not isinstance(v, str) and pd.isna(v))
+                          else str(v).strip())
     df["_size"] = df["Plot Size (Sq Yard)"].map(first_number)
     df["_ts"] = df["Timestamp"].map(to_ts)
 
@@ -184,7 +188,9 @@ def clean(v):
 
 
 def make_row(r, floors, visit_date):
-    rem = [str(r["Stage of Property"])]
+    rem = []
+    if str(r["Stage of Property"]).strip():
+        rem.append(str(r["Stage of Property"]).strip())
     c = r["Other Info or Comments"]
     if isinstance(c, str) and c.strip():
         rem.append(c.strip())
@@ -527,6 +533,12 @@ FLOOR_NAMES = {"FF": "First Floor (FF)", "FF+Bsmt": "First Floor + Basement", "T
                "Top (Terrace)": "Top Floor with Terrace", "Duplex": "Duplex"}
 road_options = sorted({float(x) for x in df["Road Size"].dropna()})
 
+
+def opts(col):
+    """Sorted unique non-blank values of a column, for the dropdowns."""
+    return sorted({v for v in df[col] if v})
+
+
 kpi_slot = st.container()
 
 with st.container(border=True):
@@ -537,16 +549,15 @@ with st.container(border=True):
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        localities = st.multiselect("Location / area", sorted(df["Locality"].unique()), key="loc")
+        localities = st.multiselect("Location / area", opts("Locality"), key="loc")
         addr = st.multiselect("Address / plot no. / name", addr_labels, key="addr",
                               accept_new_options=True,
                               placeholder="Pick or type, press Enter to add more")
-        facing = st.multiselect("Facing", sorted(df["Plot Facing"].dropna().unique()), key="facing")
+        facing = st.multiselect("Facing", opts("Plot Facing"), key="facing")
     with c2:
-        rooms = st.multiselect("Property type", sorted(df["Rooms"].dropna().unique()), key="rooms")
+        rooms = st.multiselect("Property type", opts("Rooms"), key="rooms")
         stage = st.multiselect("Stage", ["RTM", "U/C"], key="stage")
-        sources = st.multiselect("Source type", sorted(df["Source of Building"].unique()),
-                                 key="sources")
+        sources = st.multiselect("Source type", opts("Source of Building"), key="sources")
     with c3:
         s1, s2 = st.columns(2)
         min_size = s1.number_input("Min size (yd)", min_value=0, step=10, key="min_size",
@@ -649,7 +660,7 @@ for _, r in d.iterrows():
     all_prices += [n for _, nums, _ in fl for n in nums]
     rows.append(make_row(r, fl, visit_date.strip()))
 
-rows.sort(key=lambda x: (x["Location"], first_number(x["Size"]), str(x["Address"])))
+rows.sort(key=lambda x: (str(x["Location"]), first_number(x["Size"]), str(x["Address"])))
 
 # ---------------------------------------------------------------- KPI cards
 areas = len({x["Location"] for x in rows})
