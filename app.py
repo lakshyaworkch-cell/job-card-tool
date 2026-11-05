@@ -82,6 +82,16 @@ def first_number(v):
     return int(m.group()) if m else 0
 
 
+def road_num(v):
+    """Road size as a number. '30 ft' -> 30, '12 m' -> 12, '30-40' -> 30, junk/blank -> NaN."""
+    if v is None or (not isinstance(v, str) and pd.isna(v)):
+        return float("nan")
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.search(r"\d+(?:\.\d+)?", str(v))
+    return float(m.group()) if m else float("nan")
+
+
 def to_ts(v):
     if isinstance(v, (int, float)) and not pd.isna(v):
         return pd.Timestamp("1899-12-30") + pd.to_timedelta(v, unit="D")
@@ -123,6 +133,7 @@ def fetch_sheet_bytes():
 def load_data():
     raw = fetch_sheet_bytes()
     df = pd.read_excel(io.BytesIO(raw), sheet_name=SHEET_TAB)
+    df["Road Size"] = df["Road Size"].map(road_num)      # clean numbers only (junk -> blank)
     df["_size"] = df["Plot Size (Sq Yard)"].map(first_number)
     df["_ts"] = df["Timestamp"].map(to_ts)
 
@@ -201,7 +212,7 @@ def make_row(r, floors, visit_date):
         "Floor/s": ", ".join(f for f, _, _ in floors),
         "Price": ", ".join(t for _, _, t in floors),
         "Facing": clean(r["Plot Facing"]),
-        "Road": int(road) if not pd.isna(road) else "",
+        "Road": ("%g" % road) if not pd.isna(road) else "",
         "Source Name": r["Source Name"],
         "Phone No.": clean(phone),
         "Type": r["Source of Building"],
@@ -514,7 +525,7 @@ addr_labels, addr_lookup = address_options(df[["Plot No.", "Locality"]])
 FLOOR_NAMES = {"FF": "First Floor (FF)", "FF+Bsmt": "First Floor + Basement", "Triplex": "Triplex",
                "SF": "Second Floor (SF)", "TF": "Third Floor (TF)", "Top": "Fourth / Top Floor",
                "Top (Terrace)": "Top Floor with Terrace", "Duplex": "Duplex"}
-road_options = sorted({int(x) for x in df["Road Size"].dropna()})
+road_options = sorted({float(x) for x in df["Road Size"].dropna()})
 
 kpi_slot = st.container()
 
