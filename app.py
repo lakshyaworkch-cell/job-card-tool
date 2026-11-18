@@ -42,6 +42,7 @@ CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Pric
              "Client Reaction"]
 EXCEL_COLS = "ABCDEFGHIJKLMN"
 RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
+CLIENT_TYPE_OPTIONS = ["End User", "Investor"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
          ("Others [Gated]", "Gated")]
@@ -425,8 +426,13 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 [data-testid="stSidebar"] label p { color:#9ED9D1 !important; }
 [data-testid="stSidebar"] [data-baseweb="input"], [data-testid="stSidebar"] [data-baseweb="base-input"],
 [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
-[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
-[data-testid="stSidebar"] [data-testid="stMultiSelect"] svg { color:#0B1F1E !important; fill:#0B1F1E !important; }
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div,
+[data-testid="stSidebar"] [data-testid="stSelectbox"] > div > div { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] svg,
+[data-testid="stSidebar"] [data-testid="stSelectbox"] svg { color:#0B1F1E !important; fill:#0B1F1E !important; }
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] > div { background:#F4FBFA !important; color:#0B1F1E !important; }
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] div,
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] span { color:#0B1F1E !important; }
 [data-testid="stSidebar"] input { color:#0B1F1E !important; -webkit-text-fill-color:#0B1F1E !important; caret-color:#0B1F1E; background:transparent !important; font-weight:500; }
 [data-testid="stSidebar"] input::placeholder { color:#6B8F8A !important; -webkit-text-fill-color:#6B8F8A !important; }
 .side-note { font-size:.78rem; color:#7FC4BB; line-height:1.5; margin-top:6px; }
@@ -460,7 +466,8 @@ DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
               "hide_floors": True}    # Hide sold floors (red price cell)
 
 # Client details in the sidebar (emptied by "Clear all")
-CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": "",
+# cl_ctype is a dropdown, so "empty" is None (nothing selected)
+CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": None,
                  "cl_rm": [], "cl_contact": "", "cl_visit": ""}
 
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
@@ -502,7 +509,8 @@ with st.sidebar:
     st.header("Client details")
     name = st.text_input("Client name", key="cl_name")
     budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr", key="cl_budget")
-    ctype = st.text_input("Client type", key="cl_ctype")
+    ctype = st.selectbox("Client type", CLIENT_TYPE_OPTIONS, index=None,
+                         placeholder="Select client type", key="cl_ctype")
     rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM", key="cl_rm")
     contact = st.text_input("Contact number", key="cl_contact")
     visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY", key="cl_visit")
@@ -708,7 +716,8 @@ with st.container(border=True):
         if chosen:
             a2.download_button(
                 "Download job card (Excel)",
-                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype, rm=", ".join(rm),
+                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype or "",
+                                             rm=", ".join(rm),
                                              contact=contact,
                                              markets=", ".join(localities))),
                 file_name=f"Job_Card_{(name or 'Client').strip().replace(' ', '_')}.xlsx",
