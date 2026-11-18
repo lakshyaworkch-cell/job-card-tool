@@ -42,6 +42,7 @@ CARD_COLS = ["Date", "Address", "Location", "Property", "Size", "Floor/s", "Pric
              "Client Reaction"]
 EXCEL_COLS = "ABCDEFGHIJKLMN"
 RM_OPTIONS = ["Nikhil", "Tushar", "Rohil", "Pavi"]
+CLIENT_TYPES = ["End User", "Investor"]
 FLAGS = [("Others [Corner]", "Corner"), ("Others [Park Facing]", "Park Facing"),
          ("Others [T-Point]", "T-Point"), ("Others [Resale]", "Resale"),
          ("Others [Gated]", "Gated")]
@@ -460,7 +461,7 @@ DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
               "hide_floors": True}    # Hide sold floors (red price cell)
 
 # Client details in the sidebar (emptied by "Clear all")
-CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": "",
+CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": [],
                  "cl_rm": [], "cl_contact": "", "cl_visit": ""}
 
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
@@ -502,7 +503,8 @@ with st.sidebar:
     st.header("Client details")
     name = st.text_input("Client name", key="cl_name")
     budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr", key="cl_budget")
-    ctype = st.text_input("Client type", key="cl_ctype")
+    ctype = st.multiselect("Client type", CLIENT_TYPES, placeholder="Select client type",
+                           key="cl_ctype")
     rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM", key="cl_rm")
     contact = st.text_input("Contact number", key="cl_contact")
     visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY", key="cl_visit")
@@ -708,7 +710,9 @@ with st.container(border=True):
         if chosen:
             a2.download_button(
                 "Download job card (Excel)",
-                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype, rm=", ".join(rm),
+                data=build_card(chosen, dict(name=name, budget=budget,
+                                             ctype=", ".join(ctype),
+                                             rm=", ".join(rm),
                                              contact=contact,
                                              markets=", ".join(localities))),
                 file_name=f"Job_Card_{(name or 'Client').strip().replace(' ', '_')}.xlsx",
