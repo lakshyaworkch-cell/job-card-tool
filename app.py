@@ -26,6 +26,7 @@ SHEET_TAB = 0   # gid=0 in your link is the first tab, so 0 is correct
 
 LOGO_SCALE = 0.7        # Excel logo size: 0.7 = 70% of the template size (lower = smaller)
 LOGO_FALLBACK_H = 55    # logo height in px, used only if the template logo is anchored differently
+LOCATION_BOX_HEIGHT = 170   # height (px) of the scrollable area list; raise it to show more areas
 
 FLOORS = [
     ("First Floor Pricing", "FF"),
@@ -410,6 +411,17 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 [data-testid="stMultiSelectTagsContainer"] > span > span * { color:#fff !important; }
 [data-testid="stCheckbox"] label p { text-transform:none !important; letter-spacing:0; font-size:.88rem !important; color:var(--text) !important; font-weight:500 !important; }
 
+/* ---------- area chips (pills): selected ones use the same pink-red as the tags ---------- */
+[data-testid="stPills"] button, [data-testid="stBaseButton-pills"] {
+        background:#0B1F1E !important; border:1px solid var(--line) !important; border-radius:999px !important;
+        color:var(--text) !important; font-weight:500; padding:.2rem .8rem; }
+[data-testid="stPills"] button p, [data-testid="stBaseButton-pills"] p { color:var(--text) !important; font-size:.82rem !important; }
+[data-testid="stPills"] button:hover, [data-testid="stBaseButton-pills"]:hover { border-color:var(--teal-600) !important; }
+[data-testid="stBaseButton-pillsActive"] {
+        background:var(--accent) !important; border:1px solid var(--accent) !important; border-radius:999px !important;
+        color:#fff !important; font-weight:600; padding:.2rem .8rem; }
+[data-testid="stBaseButton-pillsActive"] p { color:#fff !important; font-size:.82rem !important; }
+
 /* ---------- buttons ---------- */
 .stButton > button { background:transparent !important; color:#5EEAD4 !important; border:1px solid var(--teal-600) !important;
         border-radius:10px; font-weight:600; padding:.45rem 1rem; transition:all .15s ease; }
@@ -426,13 +438,8 @@ html, body, .stApp, button, input, textarea { font-family:'Inter', system-ui, -a
 [data-testid="stSidebar"] label p { color:#9ED9D1 !important; }
 [data-testid="stSidebar"] [data-baseweb="input"], [data-testid="stSidebar"] [data-baseweb="base-input"],
 [data-testid="stSidebar"] [data-testid="stTextInputRootElement"] { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
-[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div,
-[data-testid="stSidebar"] [data-testid="stSelectbox"] > div > div { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
-[data-testid="stSidebar"] [data-testid="stMultiSelect"] svg,
-[data-testid="stSidebar"] [data-testid="stSelectbox"] svg { color:#0B1F1E !important; fill:#0B1F1E !important; }
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] > div { background:#F4FBFA !important; color:#0B1F1E !important; }
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] div,
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] span { color:#0B1F1E !important; }
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div { background:#F4FBFA !important; border:1px solid #9ED9D1 !important; border-radius:10px; }
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] svg { color:#0B1F1E !important; fill:#0B1F1E !important; }
 [data-testid="stSidebar"] input { color:#0B1F1E !important; -webkit-text-fill-color:#0B1F1E !important; caret-color:#0B1F1E; background:transparent !important; font-weight:500; }
 [data-testid="stSidebar"] input::placeholder { color:#6B8F8A !important; -webkit-text-fill-color:#6B8F8A !important; }
 .side-note { font-size:.78rem; color:#7FC4BB; line-height:1.5; margin-top:6px; }
@@ -466,8 +473,7 @@ DEFAULT_ON = {"lift_stilt": True,     # Lift & Stilt Parking
               "hide_floors": True}    # Hide sold floors (red price cell)
 
 # Client details in the sidebar (emptied by "Clear all")
-# cl_ctype is a dropdown, so "empty" is None (nothing selected)
-CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": None,
+CLIENT_FIELDS = {"cl_name": "", "cl_budget": "", "cl_ctype": [],
                  "cl_rm": [], "cl_contact": "", "cl_visit": ""}
 
 INITIAL = {"loc": [], "addr": [], "facing": [], "rooms": ["4 BHK"],
@@ -509,8 +515,10 @@ with st.sidebar:
     st.header("Client details")
     name = st.text_input("Client name", key="cl_name")
     budget = st.text_input("Budget range", placeholder="e.g. 7.5 Cr", key="cl_budget")
-    ctype = st.selectbox("Client type", CLIENT_TYPE_OPTIONS, index=None,
-                         placeholder="Select client type", key="cl_ctype")
+    # Dropdown with a single choice; the pick shows as the same pink-red tag as the other filters
+    ctype_sel = st.multiselect("Client type", CLIENT_TYPE_OPTIONS, max_selections=1,
+                               placeholder="Select client type", key="cl_ctype")
+    ctype = ctype_sel[0] if ctype_sel else ""
     rm = st.multiselect("RM", RM_OPTIONS, placeholder="Select RM", key="cl_rm")
     contact = st.text_input("Contact number", key="cl_contact")
     visit_date = st.text_input("Visit date (optional)", placeholder="DD/MM/YYYY", key="cl_visit")
@@ -564,7 +572,12 @@ with st.container(border=True):
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        localities = st.multiselect("Location / area", opts("Locality"), key="loc")
+        # Areas are shown as a list that always stays open: click as many as you like,
+        # nothing closes or scrolls away. Selected areas turn pink-red.
+        st.markdown('<div class="mini-label">Location / area</div>', unsafe_allow_html=True)
+        with st.container(height=LOCATION_BOX_HEIGHT, border=True):
+            localities = st.pills("Location / area", opts("Locality"), selection_mode="multi",
+                                  key="loc", label_visibility="collapsed") or []
         addr = st.multiselect("Address / plot no. / name", addr_labels, key="addr",
                               accept_new_options=True,
                               placeholder="Pick or type, press Enter to add more")
@@ -716,7 +729,7 @@ with st.container(border=True):
         if chosen:
             a2.download_button(
                 "Download job card (Excel)",
-                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype or "",
+                data=build_card(chosen, dict(name=name, budget=budget, ctype=ctype,
                                              rm=", ".join(rm),
                                              contact=contact,
                                              markets=", ".join(localities))),
